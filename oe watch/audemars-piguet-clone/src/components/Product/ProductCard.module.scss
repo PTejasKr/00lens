@@ -1,0 +1,67 @@
+@import '../../styles/variables';
+
+.card {
+    display: block;
+    cursor: pointer;
+    text-align: center;
+    transition: opacity 0.3s;
+
+    &:hover {
+        .imageWrapper img {
+            transform: scale(1.03);
+        }
+    }
+}
+
+.imageWrapper {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1; // Square aspect ratio for product consistency
+    overflow: hidden;
+    margin-bottom: 25px;
+    background-color: $color-grey-light;
+
+    img {
+        object-fit: contain; // Ensure watch is visible
+        mix-blend-mode: multiply; // Removing white background visually if present
+        transition: transform 0.5s ease;
+        padding: 20px;
+    }
+}
+
+.info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.reference {
+    font-family: $font-family-sans;
+    font-size: 11px;
+    color: $color-grey-medium;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.name {
+    font-family: $font-family-serif;
+    font-size: 18px;
+    color: $color-black;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+}
+
+.material {
+    font-family: $font-family-sans;
+    font-size: 13px;
+    color: $color-grey-medium;
+}
+
+.price {
+    margin-top: 10px;
+    font-family: $font-family-sans;
+    font-size: 13px;
+    color: $color-gold;
+    font-weight: 500;
+}

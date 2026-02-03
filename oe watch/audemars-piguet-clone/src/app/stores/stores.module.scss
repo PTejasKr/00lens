@@ -1,0 +1,74 @@
+@import '../../styles/variables';
+
+.page {
+    padding-top: 80px;
+    background-color: $color-white;
+}
+
+.layout {
+    display: flex;
+    flex-direction: column-reverse;
+
+    @media (min-width: $breakpoint-desktop) {
+        flex-direction: row;
+        height: calc(100vh - 80px);
+        overflow: hidden;
+    }
+}
+
+.listPanel {
+    flex: 0 0 100%;
+    padding: 40px 20px;
+    overflow-y: auto;
+    background-color: $color-white;
+
+    @media (min-width: $breakpoint-desktop) {
+        flex: 0 0 450px;
+        border-right: 1px solid $color-grey-light;
+        padding: 60px 40px;
+    }
+}
+
+.title {
+    font-size: 32px;
+    margin-bottom: 40px;
+}
+
+.grid {
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
+}
+
+.mapPanel {
+    flex: 1;
+    background-color: #e5e5e5;
+    position: relative;
+    min-height: 400px;
+}
+
+.fakeMap {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0.8;
+    filter: grayscale(0.2);
+}
+
+.mapPin {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    background-color: $color-gold;
+    border: 3px solid $color-white;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    cursor: pointer;
+    transition: transform 0.3s;
+
+    &:hover {
+        transform: translate(-50%, -50%) scale(1.5);
+        background-color: $color-black;
+    }
+}

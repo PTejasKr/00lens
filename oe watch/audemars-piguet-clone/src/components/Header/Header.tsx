@@ -1,0 +1,74 @@
+"use client";
+
+import React, { useState, useEffect } from 'react';
+import Link from 'next/link';
+import styles from './Header.module.scss';
+
+const Header = () => {
+    const [isScrolled, setIsScrolled] = useState(false);
+    const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+    useEffect(() => {
+        const handleScroll = () => {
+            if (window.scrollY > 50) {
+                setIsScrolled(true);
+            } else {
+                setIsScrolled(false);
+            }
+        };
+
+        window.addEventListener('scroll', handleScroll);
+        return () => window.removeEventListener('scroll', handleScroll);
+    }, []);
+
+    const toggleMobileMenu = () => {
+        setIsMobileMenuOpen(!isMobileMenuOpen);
+    };
+
+    const navLinks = [
+        { name: 'COLLECTIONS', href: '/collections' },
+        { name: 'OUR WORLD', href: '#' },
+        { name: 'CONFIGURATOR', href: '/configurator' },
+        { name: 'STORES', href: '/stores' },
+    ];
+
+    return (
+        <header className={`${styles.header} ${isScrolled || isMobileMenuOpen ? styles.scrolled : ''}`}>
+            <div className={`container ${styles.navContainer}`}>
+                <Link href="/" className={styles.logo}>
+                    Enrique
+                </Link>
+
+                {/* Desktop Nav */}
+                <nav className={styles.desktopNav}>
+                    {navLinks.map((link) => (
+                        <Link key={link.name} href={link.href} className={styles.navLink}>
+                            {link.name}
+                        </Link>
+                    ))}
+                </nav>
+
+                {/* Mobile Toggle */}
+                <div className={styles.mobileToggle} onClick={toggleMobileMenu}>
+                    {isMobileMenuOpen ? 'CLOSE' : 'MENU'}
+                </div>
+
+                {/* Mobile Menu */}
+                <div className={`${styles.mobileMenu} ${isMobileMenuOpen ? styles.open : ''}`}>
+                    {navLinks.map((link) => (
+                        <Link
+                            key={link.name}
+                            href={link.href}
+                            className={styles.navLink}
+                            onClick={() => setIsMobileMenuOpen(false)}
+                        >
+                            {link.name}
+                        </Link>
+                    ))}
+                </div>
+            </div>
+        </header>
+    );
+};
+
+export default Header;

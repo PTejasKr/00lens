@@ -12,7 +12,6 @@
 #include <unordered_map>
 #include <functional> // for hash
 #include <sstream>
-
 #if defined(_WIN32)
 #include <conio.h>
 #include <windows.h>
@@ -78,16 +77,55 @@ char getChar() {
 #endif
 }
 
-// Simple unlock mini-game: press D -> W -> A in order within 3 seconds
+// Wait for any key
+void pauseScreen() {
+    cout << "\nPress any key to continue...";
+    getChar();
+}
+
+// Simple snake game unlock: eat 3 fruits to unlock
 bool snakeGameUnlock() {
     clearConsole();
-    cout << "=== BMS V1 ACCESS UNLOCK ===\n";
-    cout << "Press the keys in order: D -> W -> A (within 3 seconds)\n";
+    cout << "=== BMS V1 ACCESS UNLOCK - SNAKE GAME ===\n";
+    cout << "Snake moves forward always. Use A to turn left 90 degrees, D to turn right 90 degrees.\n";
+    cout << "Eat 3 fruits to unlock. Avoid walls and yourself.\n";
+    cout << "Press any key to start...\n";
+    getChar();
 
-    time_t start = time(0);
-    int stage = 0; // 0=d, 1=w, 2=a
+    const int WIDTH = 20;
+    const int HEIGHT = 10;
+    vector<pair<int, int>> snake = {{WIDTH/2, HEIGHT/2}};
+    pair<int, int> fruit = {rand() % (WIDTH - 2), rand() % (HEIGHT - 2)}; // 2x2 fruit
+    int dirX = 1, dirY = 0; // Start moving right
+    int score = 0;
 
-    while (time(0) - start < 3) {
+    while (true) {
+        clearConsole();
+        cout << "Score: " << score << "/3\n";
+
+        // Draw grid
+        for (int y = 0; y < HEIGHT; y++) {
+            for (int x = 0; x < WIDTH; x++) {
+                bool isSnake = false;
+                for (auto& p : snake) {
+                    if (p.first == x && p.second == y) {
+                        isSnake = true;
+                        break;
+                    }
+                }
+                bool isFruit = (x >= fruit.first && x < fruit.first + 2 && y >= fruit.second && y < fruit.second + 2);
+                if (isSnake) {
+                    cout << "<";
+                } else if (isFruit) {
+                    cout << "*";
+                } else {
+                    cout << ".";
+                }
+            }
+            cout << "\n";
+        }
+
+        // Input
         char ch = 0;
 #if defined(_WIN32)
         if (_kbhit()) ch = _getch();
@@ -102,18 +140,89 @@ bool snakeGameUnlock() {
         if (rv > 0) read(0, &ch, 1);
 #endif
         if (ch) {
-            if ((ch == 'd' || ch == 'D') && stage == 0) stage = 1;
-            else if ((ch == 'w' || ch == 'W') && stage == 1) stage = 2;
-            else if ((ch == 'a' || ch == 'A') && stage == 2) return true;
+            // Turns: A left, D right
+            if (ch == 'a' || ch == 'A') {
+                // Turn left 90 degrees
+                if (dirX == 1 && dirY == 0) { dirX = 0; dirY = -1; } // right -> up
+                else if (dirX == 0 && dirY == -1) { dirX = -1; dirY = 0; } // up -> left
+                else if (dirX == -1 && dirY == 0) { dirX = 0; dirY = 1; } // left -> down
+                else if (dirX == 0 && dirY == 1) { dirX = 1; dirY = 0; } // down -> right
+            } else if (ch == 'd' || ch == 'D') {
+                // Turn right 90 degrees
+                if (dirX == 1 && dirY == 0) { dirX = 0; dirY = 1; } // right -> down
+                else if (dirX == 0 && dirY == 1) { dirX = -1; dirY = 0; } // down -> left
+                else if (dirX == -1 && dirY == 0) { dirX = 0; dirY = -1; } // left -> up
+                else if (dirX == 0 && dirY == -1) { dirX = 1; dirY = 0; } // up -> right
+            }
         }
-    }
-    return false;
-}
 
-// Wait for any key
-void pauseScreen() {
-    cout << "\nPress any key to continue...";
-    getChar();
+        // Move snake forward always
+        pair<int, int> head = snake[0];
+        head.first += dirX;
+        head.second += dirY;
+
+        // Check walls
+        if (head.first < 0 || head.first >= WIDTH || head.second < 0 || head.second >= HEIGHT) {
+            cout << "Hit wall! Game Over.\n";
+            pauseScreen();
+            return false;
+        }
+
+        // Check self collision
+        for (auto& p : snake) {
+            if (p.first == head.first && p.second == head.second) {
+                cout << "Hit yourself! Game Over.\n";
+                pauseScreen();
+                return false;
+            }
+        }
+
+        snake.insert(snake.begin(), head);
+
+        // Check fruit (any part of 2x2)
+        bool ateFruit = false;
+        for (int fx = fruit.first; fx < fruit.first + 2; fx++) {
+            for (int fy = fruit.second; fy < fruit.second + 2; fy++) {
+                if (head.first == fx && head.second == fy) {
+                    ateFruit = true;
+                    break;
+                }
+            }
+            if (ateFruit) break;
+        }
+        if (ateFruit) {
+            score++;
+            // Grow by 2 segments
+            snake.insert(snake.begin(), head); // Already inserted one, add another
+            // Spawn new fruit 10 units away, avoiding snake
+            pair<int, int> newFruit;
+            bool valid = false;
+            while (!valid) {
+                newFruit = {rand() % (WIDTH - 2), rand() % (HEIGHT - 2)};
+                int dist = abs(newFruit.first - fruit.first) + abs(newFruit.second - fruit.second);
+                if (dist >= 10) {
+                    valid = true;
+                    for (auto& p : snake) {
+                        if (p.first >= newFruit.first && p.first < newFruit.first + 2 &&
+                            p.second >= newFruit.second && p.second < newFruit.second + 2) {
+                            valid = false;
+                            break;
+                        }
+                    }
+                }
+            }
+            fruit = newFruit;
+            if (score >= 3) {
+                cout << "Unlocked!\n";
+                pauseScreen();
+                return true;
+            }
+        } else {
+            snake.pop_back();
+        }
+
+        this_thread::sleep_for(chrono::milliseconds(200));
+    }
 }
 
 // Save users to file
