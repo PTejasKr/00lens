@@ -26,10 +26,10 @@ const Navbar = () => {
         right: 0,
         zIndex: 100,
         backgroundColor: scrolled ? 'rgba(252,245,238,0.95)' : '#FCF5EE',
-        borderBottom: scrolled ? '1px solid rgba(238,105,131,0.12)' : '1px solid transparent',
+        borderBottom: scrolled ? '1px solid var(--color-border)' : '1px solid transparent',
         backdropFilter: scrolled ? 'blur(12px)' : 'none',
         transition: 'all 0.3s ease',
-        boxShadow: scrolled ? '0 2px 16px rgba(133,14,53,0.06)' : 'none',
+        boxShadow: scrolled ? '0 2px 16px rgba(160, 82, 45, 0.06)' : 'none',
       }}
     >
       <div
@@ -66,12 +66,12 @@ const Navbar = () => {
                   gap: '0.625rem',
                   padding: '0.375rem 0.75rem 0.375rem 0.375rem',
                   borderRadius: '999px',
-                  border: '1px solid rgba(238,105,131,0.2)',
+                  border: '1px solid rgba(227, 83, 54, 0.2)',
                   background: 'white',
                   cursor: 'pointer',
                   transition: 'box-shadow 0.2s',
                 }}
-                onMouseEnter={e => e.currentTarget.style.boxShadow = '0 2px 12px rgba(238,105,131,0.18)'}
+                onMouseEnter={e => e.currentTarget.style.boxShadow = '0 2px 12px rgba(227, 83, 54, 0.18)'}
                 onMouseLeave={e => e.currentTarget.style.boxShadow = 'none'}
               >
                 <img
@@ -82,14 +82,14 @@ const Navbar = () => {
                     height: '30px',
                     borderRadius: '50%',
                     objectFit: 'cover',
-                    background: '#FFC4C4',
+                    background: 'var(--color-blush)',
                   }}
                 />
                 <span style={{
                   fontFamily: "'Inter', sans-serif",
                   fontSize: '0.875rem',
                   fontWeight: 600,
-                  color: '#850E35',
+                  color: 'var(--color-burgundy)',
                   display: 'none',
                 }}
                   className="sm:block"
@@ -99,7 +99,7 @@ const Navbar = () => {
                 <ChevronDown
                   size={14}
                   style={{
-                    color: '#9A6472',
+                    color: 'var(--color-muted)',
                     transform: profileOpen ? 'rotate(180deg)' : 'rotate(0)',
                     transition: 'transform 0.2s',
                   }}
@@ -118,9 +118,9 @@ const Navbar = () => {
                       right: 0,
                       top: 'calc(100% + 8px)',
                       background: 'white',
-                      border: '1px solid rgba(238,105,131,0.15)',
+                      border: '1px solid var(--color-border)',
                       borderRadius: '14px',
-                      boxShadow: '0 8px 32px rgba(133,14,53,0.12)',
+                      boxShadow: '0 8px 32px rgba(160, 82, 45, 0.12)',
                       minWidth: '180px',
                       overflow: 'hidden',
                       zIndex: 200,
@@ -128,11 +128,11 @@ const Navbar = () => {
                     onMouseLeave={() => setProfileOpen(false)}
                   >
                     {/* User info */}
-                    <div style={{ padding: '0.875rem 1rem', borderBottom: '1px solid rgba(238,105,131,0.1)' }}>
-                      <p style={{ fontSize: '0.875rem', fontWeight: 700, color: '#850E35', margin: 0 }}>
+                    <div style={{ padding: '0.875rem 1rem', borderBottom: '1px solid var(--color-border)' }}>
+                      <p style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--color-burgundy)', margin: 0 }}>
                         {user?.name}
                       </p>
-                      <p style={{ fontSize: '0.75rem', color: '#9A6472', margin: 0, marginTop: '2px' }}>
+                      <p style={{ fontSize: '0.75rem', color: 'var(--color-muted)', margin: 0, marginTop: '2px' }}>
                         {user?.email}
                       </p>
                     </div>
@@ -147,11 +147,11 @@ const Navbar = () => {
                           borderRadius: '8px',
                           fontSize: '0.875rem',
                           fontWeight: 500,
-                          color: '#3B0A1F',
+                          color: 'var(--color-burgundy)',
                           textDecoration: 'none',
                           transition: 'background 0.15s',
                         }}
-                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(238,105,131,0.06)'}
+                        onMouseEnter={e => e.currentTarget.style.background = 'rgba(227, 83, 54, 0.06)'}
                         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                       >
                         View Profile
@@ -167,18 +167,18 @@ const Navbar = () => {
                             borderRadius: '8px',
                             fontSize: '0.875rem',
                             fontWeight: 500,
-                            color: '#3B0A1F',
+                            color: 'var(--color-burgundy)',
                             textDecoration: 'none',
                             transition: 'background 0.15s',
                           }}
-                          onMouseEnter={e => e.currentTarget.style.background = 'rgba(238,105,131,0.06)'}
+                          onMouseEnter={e => e.currentTarget.style.background = 'rgba(227, 83, 54, 0.06)'}
                           onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                         >
                           Admin Panel
                         </Link>
                       )}
 
-                      <div style={{ margin: '0.375rem 0', height: '1px', background: 'rgba(238,105,131,0.1)' }} />
+                      <div style={{ margin: '0.375rem 0', height: '1px', background: 'var(--color-border)' }} />
 
                       <button
                         onClick={() => { logout(); setProfileOpen(false); }}
@@ -217,13 +217,13 @@ const Navbar = () => {
                   fontFamily: "'Inter', sans-serif",
                   fontSize: '0.875rem',
                   fontWeight: 600,
-                  color: '#850E35',
+                  color: 'var(--color-burgundy)',
                   textDecoration: 'none',
                   padding: '0.5rem 1rem',
                   borderRadius: '8px',
                   transition: 'background 0.15s',
                 }}
-                onMouseEnter={e => e.currentTarget.style.background = 'rgba(238,105,131,0.08)'}
+                onMouseEnter={e => e.currentTarget.style.background = 'rgba(227, 83, 54, 0.08)'}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
               >
                 Sign in
@@ -238,12 +238,12 @@ const Navbar = () => {
                   textDecoration: 'none',
                   padding: '0.5rem 1.125rem',
                   borderRadius: '8px',
-                  background: '#EE6983',
-                  boxShadow: '0 2px 8px rgba(238,105,131,0.35)',
+                  background: 'var(--color-primary)',
+                  boxShadow: '0 2px 8px rgba(227, 83, 54, 0.35)',
                   transition: 'background 0.15s, transform 0.15s',
                 }}
-                onMouseEnter={e => { e.currentTarget.style.background = '#d95575'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
-                onMouseLeave={e => { e.currentTarget.style.background = '#EE6983'; e.currentTarget.style.transform = 'translateY(0)'; }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-burgundy)'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'var(--color-primary)'; e.currentTarget.style.transform = 'translateY(0)'; }}
               >
                 Join free
               </Link>

@@ -38,6 +38,17 @@ router.route('/profile-pic').put(protect, handleProfileUpload, updateProfilePic)
 // Banner image upload — multer error-handled, logs req.file
 router.route('/banner').put(protect, handleProfileUpload, updateBanner);
 
+// Followers / Following for current user
+router.route('/followers').get(protect, (req, res, next) => {
+    req.params.id = req.user._id;
+    next();
+}, getFollowers);
+
+router.route('/following').get(protect, (req, res, next) => {
+    req.params.id = req.user._id;
+    next();
+}, getFollowing);
+
 // Get user by ID
 router.route('/:id').get(getUserById);
 

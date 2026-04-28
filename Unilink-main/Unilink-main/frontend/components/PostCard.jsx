@@ -130,39 +130,37 @@ const PostCard = ({ post }) => {
     <MotionDiv
       initial={{ opacity: 0, y: 16 }}
       whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true }}
-      transition={{ duration: 0.38, ease: [0.22, 1, 0.36, 1] }}
-      style={{ background: 'white', borderRadius: '20px', border: '1px solid rgba(238,105,131,0.13)', boxShadow: '0 2px 12px rgba(133,14,53,0.06)', padding: '1.5rem', marginBottom: '1rem', position: 'relative', transition: 'box-shadow 0.25s, border-color 0.25s' }}
-      onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 6px 28px rgba(133,14,53,0.11)'; e.currentTarget.style.borderColor = 'rgba(238,105,131,0.28)'; }}
-      onMouseLeave={e => { e.currentTarget.style.boxShadow = '0 2px 12px rgba(133,14,53,0.06)'; e.currentTarget.style.borderColor = 'rgba(238,105,131,0.13)'; }}
+      viewport={{ once: true, margin: "-50px" }}
+      transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+      className="card hover-lift p-5 sm:p-7 mb-6 relative overflow-hidden"
     >
       {/* Header */}
       <div className="flex justify-between items-start mb-6">
         <div className="flex items-center gap-4">
           <Link to={`/profile/${post.user?._id}`} className="relative group/avatar cursor-pointer">
             <img
-                src={post.user?.profilePic || `https://api.dicebear.com/7.x/avataaars/svg?seed=${post.user?.name || 'User'}`}
+                src={post.user?.profilePic || `https://api.dicebear.com/7.x/initials/svg?seed=${post.user?.name || 'User'}&backgroundColor=f4a460&textColor=2d1810`}
                 alt={post.user?.name}
-                className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl border-2 border-primary/30 bg-surface p-0.5 object-cover group-hover/avatar:scale-105 transition-transform"
+                className="avatar w-12 h-12 sm:w-14 sm:h-14"
             />
-            <div className="absolute -bottom-1 -right-1 w-4 h-4 bg-green-500 border-4 border-surface rounded-full sm:w-5 sm:h-5" />
+            <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-[#10B981] border-[3px] border-white rounded-full sm:w-[18px] sm:h-[18px] shadow-sm" />
           </Link>
           <div className="flex flex-col">
             <div className="flex items-center gap-2">
               <Link to={`/profile/${post.user?._id}`} className="cursor-pointer group/name">
-                <h4 className="font-black text-ink text-lg sm:text-xl group-hover/name:text-primary transition-colors">{post.user?.name}</h4>
+                <h4 className="font-bold text-ink text-lg sm:text-[1.15rem] leading-tight group-hover/name:text-primary transition-colors">{post.user?.name}</h4>
               </Link>
               {post.group && (
                 <>
-                  <span className="text-ink/30 font-black">·</span>
-                  <Link to={`/groups/${post.group?._id || post.group}`} className="text-primary font-bold hover:underline text-sm">
+                  <span className="text-muted font-black text-xs opacity-50">·</span>
+                  <Link to={`/groups/${post.group?._id || post.group}`} className="text-primary font-semibold hover:underline text-[13px] tracking-wide">
                     {post.group?.name || 'Group'}
                   </Link>
                 </>
               )}
             </div>
-            <Link to={`/post/${post._id}`} className="hover:underline transition-all">
-                <p className="text-[10px] text-ink/60 font-bold uppercase tracking-widest">{formatDate(post.createdAt)}</p>
+            <Link to={`/post/${post._id}`} className="hover:opacity-75 transition-opacity mt-0.5 inline-block">
+                <p className="text-[11px] text-muted font-semibold uppercase tracking-widest">{formatDate(post.createdAt)}</p>
             </Link>
           </div>
 
@@ -172,15 +170,15 @@ const PostCard = ({ post }) => {
               onClick={handleFollowAuthor}
               disabled={followLoading}
               title={isFollowingAuthor ? 'Unfollow' : 'Follow'}
-              className={`ml-1 flex items-center gap-1 px-3 py-1 rounded-xl text-xs font-bold transition-all disabled:opacity-50 ${
+              className={`ml-1 flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all disabled:opacity-50 ${
                 isFollowingAuthor
-                  ? 'bg-accent/10 text-ink/70 border border-accent/20 hover:bg-red-500/10 hover:text-red-500'
-                  : 'bg-button/15 text-button border border-button/25 hover:bg-button/25'
+                  ? 'bg-transparent text-muted border border-border hover:bg-red-50 hover:text-red-600 hover:border-red-200'
+                  : 'bg-primary/10 text-primary border border-primary/20 hover:bg-primary hover:text-white'
               }`}
             >
               {isFollowingAuthor
-                ? <><UserMinus size={12} /> Following</>
-                : <><UserPlus size={12} /> Follow</>
+                ? <><UserMinus size={13} strokeWidth={2.5} /> <span className="hidden sm:inline">Following</span></>
+                : <><UserPlus size={13} strokeWidth={2.5} /> <span className="hidden sm:inline">Follow</span></>
               }
             </button>
           )}
@@ -343,14 +341,16 @@ const PostCard = ({ post }) => {
       </div>
 
       {/* Actions */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '1rem', marginTop: '1rem', borderTop: '1px solid rgba(238,105,131,0.1)' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+      <div className="flex items-center justify-between pt-4 mt-4 border-t border-border">
+        <div className="flex items-center gap-2">
           <button
             onClick={handleLike}
             disabled={isLiking}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.5rem 0.75rem', borderRadius: '10px', border: 'none', cursor: 'pointer', transition: 'all 0.18s', background: isLiked ? 'rgba(239,68,68,0.08)' : 'transparent', color: isLiked ? '#EF4444' : '#9A6472', fontFamily: "'Inter', sans-serif", fontSize: '0.875rem', fontWeight: 700 }}
-            onMouseEnter={e => { if (!isLiked) { e.currentTarget.style.background = 'rgba(238,105,131,0.07)'; e.currentTarget.style.color = '#EE6983'; } }}
-            onMouseLeave={e => { if (!isLiked) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9A6472'; } }}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border-none cursor-pointer transition-all text-sm font-bold ${
+              isLiked 
+                ? 'bg-red-500/10 text-red-500' 
+                : 'bg-transparent text-muted hover:bg-primary/10 hover:text-primary'
+            }`}
           >
             <motion.div animate={isLiked ? { scale: [1, 1.35, 1] } : {}} transition={{ duration: 0.28 }}>
               <Heart size={19} fill={isLiked ? 'currentColor' : 'none'} strokeWidth={isLiked ? 0 : 2} />
@@ -360,9 +360,11 @@ const PostCard = ({ post }) => {
 
           <button
             onClick={() => setShowComments(!showComments)}
-            style={{ display: 'flex', alignItems: 'center', gap: '0.375rem', padding: '0.5rem 0.75rem', borderRadius: '10px', border: 'none', cursor: 'pointer', transition: 'all 0.18s', background: showComments ? 'rgba(238,105,131,0.1)' : 'transparent', color: showComments ? '#850E35' : '#9A6472', fontFamily: "'Inter', sans-serif", fontSize: '0.875rem', fontWeight: 700 }}
-            onMouseEnter={e => { if (!showComments) { e.currentTarget.style.background = 'rgba(238,105,131,0.07)'; e.currentTarget.style.color = '#EE6983'; } }}
-            onMouseLeave={e => { if (!showComments) { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9A6472'; } }}
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-xl border-none cursor-pointer transition-all text-sm font-bold ${
+              showComments 
+                ? 'bg-burgundy/10 text-burgundy' 
+                : 'bg-transparent text-muted hover:bg-primary/10 hover:text-primary'
+            }`}
           >
             <MessageCircle size={19} />
             <span>{post.comments?.length || 0}</span>
@@ -372,9 +374,7 @@ const PostCard = ({ post }) => {
         <button
           onClick={handleShare}
           title="Share Post"
-          style={{ width: '36px', height: '36px', borderRadius: '10px', border: 'none', background: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9A6472', transition: 'all 0.18s' }}
-          onMouseEnter={e => { e.currentTarget.style.background = 'rgba(238,105,131,0.08)'; e.currentTarget.style.color = '#EE6983'; }}
-          onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9A6472'; }}
+          className="w-9 h-9 rounded-xl border-none bg-transparent cursor-pointer flex items-center justify-center text-muted transition-all hover:bg-primary/10 hover:text-primary"
         >
           <Share2 size={18} />
         </button>

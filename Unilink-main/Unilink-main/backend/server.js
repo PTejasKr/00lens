@@ -4,6 +4,8 @@ dotenv.config(); // Must be first — before any other imports that read process
 import express from 'express';
 import cors from 'cors';
 import morgan from 'morgan';
+import helmet from 'helmet';
+import compression from 'compression';
 import http from 'http';
 import { Server } from 'socket.io';
 
@@ -50,18 +52,39 @@ io.on('connection', (socket) => {
     console.log(`User ${userId} joined with socket ${socket.id}`);
   });
 
-  socket.on('sendMessage', async ({ senderId, receiverId, text }) => {
-    try {
-      const message = await Message.create({ sender: senderId, receiver: receiverId, text });
+  socket.on('joinGroup', (groupId) => {
+    socket.join(groupId);
+    console.log(`Socket ${socket.id} joined group room ${groupId}`);
+  });
 
-      const receiverSocketId = users[receiverId];
-      if (receiverSocketId) {
-        io.to(receiverSocketId).emit('getMessage', message);
+  socket.on('sendMessage', async ({ senderId, receiverId, groupId, text, tempId }) => {
+    try {
+      // Create message object for relay (don't save to DB yet to respect batching requirement)
+      const message = {
+        _id: tempId || Date.now().toString(),
+        sender: senderId,
+        text, // This is already encrypted from client
+        createdAt: new Date().toISOString(),
+        status: 'delivered'
+      };
+
+      if (groupId) {
+        message.group = groupId;
+        // Emit to everyone in the group room
+        io.to(groupId).emit('getMessage', message);
+      } else {
+        message.receiver = receiverId;
+        // Emit to specific user
+        const receiverSocketId = users[receiverId];
+        if (receiverSocketId) {
+          io.to(receiverSocketId).emit('getMessage', message);
+        }
       }
 
-      socket.emit('messageSent', message);
+      // Notify sender that message was relayed
+      socket.emit('messageRelayed', { tempId: message._id });
     } catch (error) {
-      console.error('Error saving message:', error.message);
+      console.error('Error relaying message:', error.message);
     }
   });
 
@@ -77,13 +100,21 @@ io.on('connection', (socket) => {
 });
 
 // ─── Core Middleware ─────────────────────────────────────────────────────────
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" }, // Required for serving media locally
+}));
+app.use(compression());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(cors());
 
 // Serve Static Files (local uploads for dev)
 const __dirname = path.resolve();
-app.use('/uploads', express.static(path.join(__dirname, '/uploads')));
+const uploadsDir = path.join(__dirname, '/uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+app.use('/uploads', express.static(uploadsDir));
 
 // Logging (dev only)
 if (process.env.NODE_ENV !== 'production') {

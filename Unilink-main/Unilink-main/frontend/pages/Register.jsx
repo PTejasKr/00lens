@@ -6,6 +6,32 @@ import { Mail, Lock, User, ArrowRight, Eye, EyeOff, ShieldCheck } from 'lucide-r
 import { motion } from 'framer-motion';
 import Logo from '../components/Logo';
 
+const Field = ({ label, icon: Icon, value, onChange, type = 'text', placeholder, rightAction }) => (
+  <div>
+    <label style={{ display: 'block', fontFamily: "'Inter', sans-serif", fontSize: '0.8125rem', fontWeight: 600, color: '#3B0A1F', marginBottom: '0.5rem', letterSpacing: '0.01em' }}>
+      {label}
+    </label>
+    <div style={{ position: 'relative' }}>
+      <Icon size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: '#9A6472', pointerEvents: 'none' }} />
+      <input
+        type={type}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="input-field"
+        style={{ paddingLeft: '2.75rem', paddingRight: rightAction ? '3rem' : '1rem' }}
+        required
+      />
+      {rightAction && (
+        <button type="button" onClick={rightAction.onClick}
+          style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#9A6472', padding: 0, display: 'flex' }}>
+          {rightAction.icon}
+        </button>
+      )}
+    </div>
+  </div>
+);
+
 const Register = () => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -39,32 +65,6 @@ const Register = () => {
     } catch { toast.error('Connection error. Please try again.'); }
     finally { setIsSubmitting(false); }
   };
-
-  const Field = ({ label, icon: Icon, value, onChange, type = 'text', placeholder, rightAction }) => (
-    <div>
-      <label style={{ display: 'block', fontFamily: "'Inter', sans-serif", fontSize: '0.8125rem', fontWeight: 600, color: '#3B0A1F', marginBottom: '0.5rem', letterSpacing: '0.01em' }}>
-        {label}
-      </label>
-      <div style={{ position: 'relative' }}>
-        <Icon size={16} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: '#9A6472', pointerEvents: 'none' }} />
-        <input
-          type={type}
-          value={value}
-          onChange={e => onChange(e.target.value)}
-          placeholder={placeholder}
-          className="input-field"
-          style={{ paddingLeft: '2.75rem', paddingRight: rightAction ? '3rem' : '1rem' }}
-          required
-        />
-        {rightAction && (
-          <button type="button" onClick={rightAction.onClick}
-            style={{ position: 'absolute', right: '1rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#9A6472', padding: 0, display: 'flex' }}>
-            {rightAction.icon}
-          </button>
-        )}
-      </div>
-    </div>
-  );
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', background: '#FCF5EE' }}>
@@ -167,7 +167,7 @@ const Register = () => {
 
           <p style={{ fontFamily: "'Inter', sans-serif", fontSize: '0.875rem', color: '#9A6472', margin: '1.75rem 0 0', textAlign: 'center' }}>
             Already have an account?{' '}
-            <Link to="/login" style={{ color: '#EE6983', fontWeight: 700, textDecoration: 'none' }}>
+            <Link to="/login" style={{ color: 'var(--color-primary)', fontWeight: 700, textDecoration: 'none' }}>
               Sign in
             </Link>
           </p>

@@ -20,6 +20,7 @@ const seedData = async () => {
 
         // Users
         const usersData = [
+            { name: 'Admin User', email: 'admin@university.edu', password: 'adminpassword', department: 'Admin', year: 'Staff', role: 'admin', profilePic: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Admin' },
             { name: 'Aarav Patel', email: 'aarav@example.com', password: 'password123', department: 'Computer Science', year: '3rd Year', profilePic: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Aarav' },
             { name: 'Vivaan Sharma', email: 'vivaan@example.com', password: 'password123', department: 'Electronics', year: '2nd Year', profilePic: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Vivaan' },
             { name: 'Aditya Singh', email: 'aditya@example.com', password: 'password123', department: 'Information Technology', year: '4th Year', profilePic: 'https://api.dicebear.com/7.x/avataaars/svg?seed=Aditya' },

@@ -41,23 +41,20 @@ const registerUser = asyncHandler(async (req, res) => {
         return res.status(400).json({ message: "User already exists" });
     }
 
-    // Hash password
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
-
     // Save user
     const user = new User({
         name,
         email,
-        password: hashedPassword
+        password // Let the User model pre-save hook handle hashing
     });
     await user.save();
 
-    // Return response
-    res.status(201).json({ message: "User registered successfully" });
-});
+    // Generate JWT
+    const token = generateToken(user._id);
 
-import jwt from 'jsonwebtoken';
+    // Return response with user data and token
+    res.status(201).json(buildAuthResponse(user, token));
+});
 
 // @desc    Auth user & get token
 // @route   POST /api/auth/login
@@ -71,7 +68,10 @@ const loginUser = asyncHandler(async (req, res) => {
     }
 
     // Find user
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email })
+        .populate('followers', 'name profilePic')
+        .populate('following', 'name profilePic');
+        
     if (!user) {
         return res.status(400).json({ message: "Invalid credentials" });
     }
@@ -83,21 +83,10 @@ const loginUser = asyncHandler(async (req, res) => {
     }
 
     // Generate JWT
-    const token = jwt.sign(
-        { id: user._id },
-        process.env.JWT_SECRET,
-        { expiresIn: "7d" }
-    );
+    const token = generateToken(user._id);
 
     // Return response
-    res.status(200).json({
-        token,
-        user: {
-            id: user._id,
-            name: user.name,
-            email: user.email
-        }
-    });
+    res.status(200).json(buildAuthResponse(user, token));
 });
 
 export { registerUser, loginUser };

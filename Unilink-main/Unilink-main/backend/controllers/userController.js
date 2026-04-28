@@ -1,16 +1,34 @@
 import asyncHandler from 'express-async-handler';
 import User from '../models/User.js';
-import cloudinary from '../config/cloudinary.js';
 import fs from 'fs';
-
 
 // Helper: safely delete a temp file
 const cleanupFile = (filePath) => {
     try {
-        if (filePath && fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-        }
+        if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
     } catch (_) {}
+};
+
+// Upload to Cloudinary or fall back to local URL
+const uploadOrLocal = async (filePath, options, req) => {
+    const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
+    const apiKey    = process.env.CLOUDINARY_API_KEY;
+    const apiSecret = process.env.CLOUDINARY_API_SECRET;
+    const credsOk =
+        cloudName && cloudName !== 'dummy' &&
+        apiKey    && apiKey    !== 'dummy' &&
+        apiSecret && apiSecret !== 'dummy';
+
+    if (credsOk) {
+        const { default: cloudinary } = await import('../config/cloudinary.js');
+        const result = await cloudinary.uploader.upload(filePath, options);
+        cleanupFile(filePath);
+        return result.secure_url;
+    }
+    // Local fallback — keep file, return local URL
+    const normalized = filePath.replace(/\\/g, '/');
+    const baseUrl = process.env.BACKEND_URL || `${req.protocol}://${req.get('host')}`;
+    return `${baseUrl}/${normalized}`;
 };
 
 // Helper to build a safe user response object
@@ -98,16 +116,13 @@ const updateProfilePic = asyncHandler(async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        // Upload to Cloudinary with resource_type auto for safety
-        const result = await cloudinary.uploader.upload(filePath, {
+        const url = await uploadOrLocal(filePath, {
             folder: 'unilink/profile_pics',
             resource_type: 'auto',
-        });
+        }, req);
 
-        user.profilePic = result.secure_url;
+        user.profilePic = url;
         const updatedUser = await user.save();
-
-        cleanupFile(filePath);
         return res.json(buildUserResponse(updatedUser));
     } catch (error) {
         cleanupFile(filePath);
@@ -132,15 +147,13 @@ const updateBanner = asyncHandler(async (req, res) => {
             return res.status(404).json({ message: 'User not found' });
         }
 
-        const result = await cloudinary.uploader.upload(filePath, {
+        const url = await uploadOrLocal(filePath, {
             folder: 'unilink/banners',
             resource_type: 'auto',
-        });
+        }, req);
 
-        user.bannerImage = result.secure_url;
+        user.bannerImage = url;
         const updatedUser = await user.save();
-
-        cleanupFile(filePath);
         return res.json(buildUserResponse(updatedUser));
     } catch (error) {
         cleanupFile(filePath);

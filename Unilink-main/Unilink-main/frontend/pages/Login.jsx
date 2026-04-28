@@ -160,7 +160,7 @@ const Login = () => {
           <div style={{ marginTop: '2rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', textAlign: 'center' }}>
             <p style={{ fontFamily: "'Inter', sans-serif", fontSize: '0.875rem', color: '#9A6472', margin: 0 }}>
               Don't have an account?{' '}
-              <Link to="/register" style={{ color: '#EE6983', fontWeight: 700, textDecoration: 'none' }}>
+              <Link to="/register" style={{ color: 'var(--color-primary)', fontWeight: 700, textDecoration: 'none' }}>
                 Create one free
               </Link>
             </p>

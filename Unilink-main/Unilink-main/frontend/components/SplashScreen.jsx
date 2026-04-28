@@ -1,15 +1,68 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import Logo from './Logo';
+
+const GLYPHS = ['/', '-', '\\', '|', '+', '=', '*', '#', '%', '@'];
+const MEASUREMENTS = ['29', '33', '38', '42', '51', '67', '74', '89'];
 
 const SplashScreen = ({ onComplete }) => {
-  const [phase, setPhase] = useState('enter'); // 'enter' | 'hold' | 'exit'
+  const [loadingText, setLoadingText] = useState('INITIALIZING');
+  const [glyph, setGlyph] = useState('/');
+  const [progress, setProgress] = useState(0);
+  const [phase, setPhase] = useState('loading');
+
+  // Random measurements positioned around the screen
+  const markers = useMemo(() => {
+    return Array.from({ length: 8 }).map((_, i) => ({
+      id: i,
+      x: `${Math.random() * 80 + 10}%`,
+      y: `${Math.random() * 80 + 10}%`,
+      val: MEASUREMENTS[i % MEASUREMENTS.length]
+    }));
+  }, []);
 
   useEffect(() => {
-    const t1 = setTimeout(() => setPhase('hold'), 800);
-    const t2 = setTimeout(() => setPhase('exit'), 2200);
-    const t3 = setTimeout(() => onComplete?.(), 2800);
-    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+    // Glyph rotation
+    const glyphInterval = setInterval(() => {
+      setGlyph(prev => {
+        const idx = GLYPHS.indexOf(prev);
+        return GLYPHS[(idx + 1) % GLYPHS.length];
+      });
+    }, 100);
+
+    // Progress simulation
+    const progressInterval = setInterval(() => {
+      setProgress(p => {
+        if (p >= 100) {
+          clearInterval(progressInterval);
+          return 100;
+        }
+        return p + Math.random() * 15;
+      });
+    }, 200);
+
+    // Text updates
+    const textSequence = [
+      { t: 0, text: 'BOOTING_KERNEL' },
+      { t: 600, text: 'FETCHING_CAMPUS_RESOURCES' },
+      { t: 1200, text: 'MAPPING_NETWORK_GRAPH' },
+      { t: 1800, text: 'FINALIZING_UI_THREAD' },
+      { t: 2400, text: 'READY' }
+    ];
+
+    textSequence.forEach(({ t, text }) => {
+      setTimeout(() => setLoadingText(text), t);
+    });
+
+    // Cleanup and completion
+    const exitTimer = setTimeout(() => setPhase('exit'), 2800);
+    const completeTimer = setTimeout(() => onComplete?.(), 3400);
+
+    return () => {
+      clearInterval(glyphInterval);
+      clearInterval(progressInterval);
+      clearTimeout(exitTimer);
+      clearTimeout(completeTimer);
+    };
   }, [onComplete]);
 
   return (
@@ -18,62 +71,93 @@ const SplashScreen = ({ onComplete }) => {
         <motion.div
           key="splash"
           initial={{ opacity: 1 }}
-          animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
-          transition={{ duration: 0.6, ease: [0.4, 0, 0.2, 1] }}
+          transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
           style={{
             position: 'fixed',
             inset: 0,
             zIndex: 9999,
-            backgroundColor: '#FCF5EE',
+            backgroundColor: '#F5F5DC',
+            color: '#A0522D',
+            fontFamily: "'JetBrains Mono', monospace",
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            gap: '1.5rem',
+            overflow: 'hidden',
           }}
         >
-          {/* Logo + wordmark */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.65, ease: [0.25, 0.46, 0.45, 0.94] }}
-          >
-            <Logo size={48} showWordmark />
-          </motion.div>
-
-          {/* Tagline */}
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 0.55 }}
-            transition={{ delay: 0.4, duration: 0.5 }}
-            style={{
-              fontFamily: "'Inter', sans-serif",
-              fontSize: '0.8125rem',
-              fontWeight: 500,
-              letterSpacing: '0.12em',
-              textTransform: 'uppercase',
-              color: '#850E35',
-            }}
-          >
-            Your Campus Network
-          </motion.p>
-
-          {/* Progress bar */}
-          <motion.div
-            initial={{ scaleX: 0, opacity: 0 }}
-            animate={{ scaleX: 1, opacity: 1 }}
-            transition={{ delay: 0.5, duration: 1.4, ease: [0.25, 0.46, 0.45, 0.94] }}
+          {/* Background Grid Pattern */}
+          <div 
             style={{
               position: 'absolute',
-              bottom: 0,
-              left: 0,
-              height: '2px',
-              width: '100%',
-              backgroundColor: '#EE6983',
-              transformOrigin: 'left center',
+              inset: 0,
+              backgroundImage: 'radial-gradient(#A0522D 0.5px, transparent 0.5px)',
+              backgroundSize: '32px 32px',
+              opacity: 0.1,
             }}
           />
+
+          {/* Geometric Markers (igloo style) */}
+          {markers.map((m) => (
+            <motion.div
+              key={m.id}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: [0, 0.4, 0.2] }}
+              transition={{ delay: m.id * 0.1, duration: 2, repeat: Infinity }}
+              style={{
+                position: 'absolute',
+                left: m.x,
+                top: m.y,
+                fontSize: '10px',
+                letterSpacing: '0.1em',
+                pointerEvents: 'none',
+              }}
+            >
+              +{m.val}
+              <div style={{ width: '20px', height: '1px', background: '#A0522D', opacity: 0.3, marginTop: '2px' }} />
+            </motion.div>
+          ))}
+
+          {/* Central Terminal Content */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2rem', position: 'relative' }}>
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              style={{
+                fontFamily: "'Oglaso', sans-serif",
+                fontSize: '120px',
+                fontWeight: 700,
+                letterSpacing: '-0.02em',
+                lineHeight: 1,
+                textAlign: 'center',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '1rem',
+              }}
+            >
+              UNILINK
+              <span style={{ color: '#E35336', fontSize: '3rem' }}>{glyph}</span>
+            </motion.div>
+
+            <div style={{ width: '300px', textAlign: 'center' }}>
+              <div style={{ fontSize: '11px', letterSpacing: '0.2em', opacity: 0.7, marginBottom: '0.5rem' }}>
+                {loadingText}
+              </div>
+              <div style={{ height: '4px', width: '100%', background: 'rgba(160, 82, 45, 0.1)', borderRadius: '2px', overflow: 'hidden' }}>
+                <motion.div 
+                  initial={{ width: '0%' }}
+                  animate={{ width: `${progress}%` }}
+                  style={{ height: '100%', background: '#E35336' }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* System Info Footnote */}
+          <div style={{ position: 'absolute', bottom: '2rem', width: '100%', textAlign: 'center', fontSize: '10px', opacity: 0.4, letterSpacing: '0.1em' }}>
+            V2.1.0-STABLE // SYSTEM_READY // @UNILINK_CAMPUS
+          </div>
         </motion.div>
       )}
     </AnimatePresence>

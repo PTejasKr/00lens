@@ -39,10 +39,11 @@ export const AuthProvider = ({ children }) => {
   const login = async (email, password) => {
     try {
       const { data } = await api.post('/auth/login', { email, password });
+      // Backend now returns the flattened user object with a 'token' property
       localStorage.setItem('token', data.token);
-      localStorage.setItem('user', JSON.stringify(data.user));
-      setUser(data.user);
-      return { success: true, name: data.user.name };
+      localStorage.setItem('user', JSON.stringify(data));
+      setUser(data);
+      return { success: true, name: data.name };
     } catch (error) {
       const errData = error.response?.data;
       const message = errData?.message
@@ -55,9 +56,11 @@ export const AuthProvider = ({ children }) => {
   const register = async (name, email, password) => {
     try {
       const { data } = await api.post('/auth/register', { name, email, password });
-      // Note: Backend now only returns a success message, not user data/token.
-      // The user must log in after registering.
-      return { success: true, message: data.message };
+      // Backend now returns the user object + token on successful registration
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data));
+      setUser(data);
+      return { success: true, name: data.name };
     } catch (error) {
       const errData = error.response?.data;
       const message = errData?.message

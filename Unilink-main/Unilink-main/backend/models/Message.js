@@ -10,17 +10,45 @@ const messageSchema = mongoose.Schema(
         receiver: {
             type: mongoose.Schema.Types.ObjectId,
             ref: 'User',
-            required: true,
+            required: false, // Optional for group messages
+        },
+        group: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Group',
+            required: false,
         },
         text: {
             type: String,
-            required: true,
+            default: '',
+        },
+        image: {
+            type: String,
+            default: '',
+        },
+        video: {
+            type: String,
+            default: '',
+        },
+        document: {
+            type: String,
+            default: '',
+        },
+        documentName: {
+            type: String,
+            default: '',
+        },
+        readAt: {
+            type: Date,
+            default: null,
         },
     },
     {
         timestamps: true,
     }
 );
+
+// Index for fast conversation lookups
+messageSchema.index({ sender: 1, receiver: 1, createdAt: -1 });
 
 const Message = mongoose.model('Message', messageSchema);
 

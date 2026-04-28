@@ -1,178 +1,324 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { AnimatePresence, motion } from 'framer-motion';
-import { Send, Image as ImageIcon, Film, FileText, X, Info } from 'lucide-react';
+import { Send, Image as ImageIcon, Film, FileText, X, Info, UploadCloud } from 'lucide-react';
 import { usePosts } from '../context/PostContext';
 
 const CreatePost = () => {
   const { createPost } = usePosts();
-  const [content, setContent] = useState('');
-  const [imageFile, setImageFile] = useState(null);
-  const [videoFile, setVideoFile] = useState(null);
-  const [docFile, setDocFile] = useState(null);
+  const [content, setContent]       = useState('');
+  const [imageFile, setImageFile]   = useState(null);
+  const [videoFile, setVideoFile]   = useState(null);
+  const [docFile, setDocFile]       = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
+  const [videoPreview, setVideoPreview] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const navigate = useNavigate();
 
+  // Separate refs so we can reset each input independently
+  const imageRef = useRef(null);
+  const videoRef = useRef(null);
+  const docRef   = useRef(null);
+
+  // ─── Handlers ────────────────────────────────────────────────────────────────
+
   const handleImageChange = (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { toast.error('Image must be under 5 MB'); return; }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Image must be under 5 MB');
+      e.target.value = '';
+      return;
+    }
     setImageFile(file);
     setImagePreview(URL.createObjectURL(file));
   };
 
+  const handleVideoChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 20 * 1024 * 1024) {
+      toast.error('Video must be under 20 MB');
+      e.target.value = '';
+      return;
+    }
+    setVideoFile(file);
+    setVideoPreview(URL.createObjectURL(file));
+  };
+
+  const handleDocChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setDocFile(file);
+  };
+
   const handleFileClear = (type) => {
-    if (type === 'image') { setImageFile(null); setImagePreview(null); }
-    if (type === 'video') setVideoFile(null);
-    if (type === 'doc') setDocFile(null);
+    if (type === 'image') {
+      setImageFile(null);
+      setImagePreview(null);
+      if (imageRef.current) imageRef.current.value = '';
+    }
+    if (type === 'video') {
+      setVideoFile(null);
+      setVideoPreview(null);
+      if (videoRef.current) videoRef.current.value = '';
+    }
+    if (type === 'doc') {
+      setDocFile(null);
+      if (docRef.current) docRef.current.value = '';
+    }
   };
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
     if (!content.trim() && !imageFile && !videoFile && !docFile) {
-      toast.warn('Post cannot be empty'); return;
+      toast.warn('Post cannot be empty');
+      return;
     }
+
     const formData = new FormData();
     formData.append('text', content);
     if (imageFile) formData.append('image', imageFile);
     if (videoFile) formData.append('video', videoFile);
-    if (docFile) formData.append('document', docFile);
+    if (docFile)   formData.append('document', docFile);
+
     setIsSubmitting(true);
+    setUploadProgress(0);
+
+    // Simulate progress for UX
+    const progressInterval = setInterval(() => {
+      setUploadProgress(p => Math.min(p + 10, 85));
+    }, 200);
+
     try {
       const result = await createPost(formData);
-      if (result && result.success) navigate('/');
-    } catch { toast.error('An unexpected error occurred.'); }
-    finally { setIsSubmitting(false); }
+      clearInterval(progressInterval);
+      setUploadProgress(100);
+      if (result && result.success) {
+        setTimeout(() => navigate('/'), 400);
+      }
+    } catch {
+      toast.error('An unexpected error occurred.');
+    } finally {
+      clearInterval(progressInterval);
+      setIsSubmitting(false);
+      setUploadProgress(0);
+    }
   };
 
   const isEmpty = !content.trim() && !imageFile && !videoFile && !docFile;
 
+  // ─── JSX ─────────────────────────────────────────────────────────────────────
   return (
-    <div style={{ maxWidth: '680px', margin: '0 auto', padding: '1rem 0' }}>
+    <div className="max-w-2xl mx-auto py-6">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
       >
-        <h1 style={{ fontFamily: "'DM Serif Display', serif", fontSize: 'clamp(1.75rem, 3vw, 2.25rem)', color: '#850E35', margin: '0 0 0.375rem', lineHeight: 1.1 }}>
+        <h1 className="font-serif text-3xl sm:text-4xl text-burgundy mb-1 leading-tight">
           New Post
         </h1>
-        <p style={{ fontFamily: "'Inter', sans-serif", fontSize: '0.9rem', color: '#9A6472', margin: '0 0 1.75rem' }}>
+        <p className="font-sans text-sm text-burgundy/80 mb-7">
           Share knowledge or moments with your campus community
         </p>
 
-        <div style={{ background: 'white', borderRadius: '20px', border: '1px solid rgba(238,105,131,0.14)', boxShadow: '0 4px 24px rgba(133,14,53,0.08)', overflow: 'hidden' }}>
+        <div className="bg-surface rounded-3xl border border-accent/20 shadow-xl overflow-hidden relative">
+          {/* Upload progress bar */}
+          {isSubmitting && (
+            <motion.div
+              className="absolute top-0 left-0 h-1 bg-accent z-10"
+              animate={{ width: `${uploadProgress}%` }}
+              transition={{ duration: 0.3 }}
+            />
+          )}
+
           <form onSubmit={handleSubmit}>
             {/* Textarea */}
             <textarea
               value={content}
               onChange={e => setContent(e.target.value)}
               placeholder="What's happening on campus?..."
-              style={{
-                width: '100%', display: 'block', resize: 'none', border: 'none', outline: 'none',
-                padding: '1.5rem', minHeight: '180px',
-                fontFamily: "'Inter', sans-serif", fontSize: '1rem', fontWeight: 400,
-                color: '#3B0A1F', lineHeight: 1.7, background: 'transparent',
-                boxSizing: 'border-box',
-              }}
+              className="w-full block resize-none border-none outline-none p-6 min-h-[180px] font-sans text-base font-medium text-ink leading-relaxed bg-transparent"
+              maxLength={1000}
             />
 
             {/* Char count */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', paddingRight: '1.5rem', paddingBottom: '0.5rem' }}>
-              <span style={{ fontFamily: "'Inter', sans-serif", fontSize: '0.75rem', color: content.length > 280 ? '#DC2626' : '#b0899c', fontWeight: 500 }}>
+            <div className="flex justify-end pr-6 pb-2">
+              <span className={`font-sans text-xs font-semibold ${content.length > 450 ? 'text-red-600' : 'text-muted'}`}>
                 {content.length} / 500
               </span>
             </div>
 
-            {/* Media previews */}
+            {/* Media Previews */}
             <AnimatePresence>
-              {(imagePreview || videoFile || docFile) && (
+              {(imagePreview || videoPreview || docFile) && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
                   exit={{ opacity: 0, height: 0 }}
-                  style={{ padding: '0 1.5rem 1rem' }}
+                  className="px-6 pb-4 space-y-3"
                 >
+                  {/* Image preview */}
                   {imagePreview && (
-                    <div style={{ position: 'relative', borderRadius: '12px', overflow: 'hidden', maxHeight: '240px' }}>
-                      <img src={imagePreview} alt="Preview" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} />
-                      <button type="button" onClick={() => handleFileClear('image')}
-                        style={{ position: 'absolute', top: '8px', right: '8px', width: '30px', height: '30px', borderRadius: '50%', background: 'rgba(0,0,0,0.5)', border: 'none', cursor: 'pointer', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div className="relative rounded-2xl overflow-hidden max-h-[240px] shadow-md border border-accent/10">
+                      <img src={imagePreview} alt="Preview" className="w-full h-full object-cover block" />
+                      <button
+                        type="button"
+                        onClick={() => handleFileClear('image')}
+                        className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/60 border-none cursor-pointer text-white flex items-center justify-center hover:bg-black/80 transition-colors backdrop-blur-sm"
+                      >
                         <X size={16} />
                       </button>
                     </div>
                   )}
-                  <div style={{ display: 'flex', gap: '0.5rem', marginTop: imagePreview ? '0.5rem' : 0 }}>
-                    {videoFile && (
-                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', padding: '0.375rem 0.75rem', background: 'rgba(238,105,131,0.07)', borderRadius: '8px', fontSize: '0.8125rem', color: '#3B0A1F', fontFamily: "'Inter', sans-serif", fontWeight: 600 }}>
-                        <Film size={14} style={{ color: '#EE6983' }} />
-                        <span style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{videoFile.name}</span>
-                        <button type="button" onClick={() => handleFileClear('video')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9A6472', padding: 0, display: 'flex' }}><X size={12} /></button>
-                      </div>
-                    )}
-                    {docFile && (
-                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.375rem', padding: '0.375rem 0.75rem', background: 'rgba(238,105,131,0.07)', borderRadius: '8px', fontSize: '0.8125rem', color: '#3B0A1F', fontFamily: "'Inter', sans-serif", fontWeight: 600 }}>
-                        <FileText size={14} style={{ color: '#EE6983' }} />
-                        <span style={{ maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{docFile.name}</span>
-                        <button type="button" onClick={() => handleFileClear('doc')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9A6472', padding: 0, display: 'flex' }}><X size={12} /></button>
-                      </div>
-                    )}
-                  </div>
+
+                  {/* Video preview */}
+                  {videoPreview && (
+                    <div className="relative rounded-2xl overflow-hidden shadow-md border border-accent/10">
+                      <video
+                        src={videoPreview}
+                        controls
+                        className="w-full rounded-2xl max-h-[240px] object-contain bg-black"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => handleFileClear('video')}
+                        className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/60 border-none cursor-pointer text-white flex items-center justify-center hover:bg-black/80 transition-colors backdrop-blur-sm"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Document chip */}
+                  {docFile && (
+                    <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-accent/10 rounded-xl text-sm text-ink font-semibold border border-accent/20 shadow-sm">
+                      <FileText size={15} className="text-accent flex-shrink-0" />
+                      <span className="max-w-[200px] overflow-hidden text-ellipsis whitespace-nowrap">{docFile.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleFileClear('doc')}
+                        className="bg-transparent border-none cursor-pointer text-ink/60 p-0.5 hover:text-red-500 transition-colors flex"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
                 </motion.div>
               )}
             </AnimatePresence>
 
             {/* Footer toolbar */}
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.875rem 1.5rem', borderTop: '1px solid rgba(238,105,131,0.1)', background: 'rgba(252,245,238,0.5)' }}>
-              {/* Attach buttons */}
-              <div style={{ display: 'flex', gap: '0.25rem' }}>
-                {[
-                  { Icon: ImageIcon, type: 'image', accept: 'image/*', title: 'Add image' },
-                  { Icon: Film, type: 'video', accept: 'video/*', title: 'Add video' },
-                  { Icon: FileText, type: 'doc', accept: '.pdf,.doc,.docx', title: 'Add document' },
-                ].map(({ Icon, type, accept, title }) => (
-                  <label key={type} title={title}
-                    style={{ width: '36px', height: '36px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: '#9A6472', transition: 'background 0.15s, color 0.15s' }}
-                    onMouseEnter={e => { e.currentTarget.style.background = 'rgba(238,105,131,0.08)'; e.currentTarget.style.color = '#EE6983'; }}
-                    onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#9A6472'; }}
-                  >
-                    <Icon size={18} />
-                    <input type="file" className="hidden" accept={accept} onChange={e => {
-                      const file = e.target.files[0];
-                      if (type === 'image') handleImageChange(e);
-                      else if (type === 'video') setVideoFile(file);
-                      else setDocFile(file);
-                    }} style={{ display: 'none' }} />
-                  </label>
-                ))}
+            <div className="flex items-center justify-between px-6 py-3.5 border-t border-accent/10 bg-accent/5 backdrop-blur-md">
+              {/* Attach buttons — each is a proper <button> that triggers a hidden <input> via ref */}
+              <div className="flex gap-1.5">
+                {/* Image button */}
+                <button
+                  type="button"
+                  id="add-image-btn"
+                  title="Add image"
+                  onClick={() => imageRef.current?.click()}
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer transition-all border ${
+                    imageFile
+                      ? 'bg-accent/20 text-accent border-accent/30'
+                      : 'text-ink/60 hover:bg-accent/10 hover:text-accent border-transparent hover:border-accent/20'
+                  }`}
+                >
+                  <ImageIcon size={18} strokeWidth={2.5} />
+                </button>
+                <input
+                  ref={imageRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageChange}
+                  style={{ position: 'absolute', width: '1px', height: '1px', opacity: 0, overflow: 'hidden' }}
+                  tabIndex={-1}
+                  aria-hidden="true"
+                />
+
+                {/* Video button */}
+                <button
+                  type="button"
+                  id="add-video-btn"
+                  title="Add video"
+                  onClick={() => videoRef.current?.click()}
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer transition-all border ${
+                    videoFile
+                      ? 'bg-accent/20 text-accent border-accent/30'
+                      : 'text-ink/60 hover:bg-accent/10 hover:text-accent border-transparent hover:border-accent/20'
+                  }`}
+                >
+                  <Film size={18} strokeWidth={2.5} />
+                </button>
+                <input
+                  ref={videoRef}
+                  type="file"
+                  accept="video/*"
+                  onChange={handleVideoChange}
+                  style={{ position: 'absolute', width: '1px', height: '1px', opacity: 0, overflow: 'hidden' }}
+                  tabIndex={-1}
+                  aria-hidden="true"
+                />
+
+                {/* Document button */}
+                <button
+                  type="button"
+                  id="add-doc-btn"
+                  title="Add document"
+                  onClick={() => docRef.current?.click()}
+                  className={`w-10 h-10 rounded-xl flex items-center justify-center cursor-pointer transition-all border ${
+                    docFile
+                      ? 'bg-accent/20 text-accent border-accent/30'
+                      : 'text-ink/60 hover:bg-accent/10 hover:text-accent border-transparent hover:border-accent/20'
+                  }`}
+                >
+                  <FileText size={18} strokeWidth={2.5} />
+                </button>
+                <input
+                  ref={docRef}
+                  type="file"
+                  accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                  onChange={handleDocChange}
+                  style={{ position: 'absolute', width: '1px', height: '1px', opacity: 0, overflow: 'hidden' }}
+                  tabIndex={-1}
+                  aria-hidden="true"
+                />
               </div>
 
               {/* Post button */}
               <button
                 type="submit"
+                id="submit-post-btn"
                 disabled={isSubmitting || isEmpty}
-                className="btn-primary"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1.25rem', opacity: isEmpty ? 0.45 : 1 }}
+                className={`inline-flex items-center gap-2 px-6 py-2.5 rounded-xl font-bold transition-all ${
+                  isEmpty || isSubmitting
+                    ? 'bg-ink/10 text-ink/40 cursor-not-allowed shadow-none'
+                    : 'bg-accent text-white hover:opacity-90 shadow-lg shadow-accent/30 hover:-translate-y-0.5'
+                }`}
               >
                 {isSubmitting
-                  ? <span style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: 'white', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.7s linear infinite' }} />
-                  : <><Send size={15} /> Post</>
+                  ? <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full inline-block animate-spin" /> Posting…</>
+                  : <><Send size={16} strokeWidth={2.5} /> Post</>
                 }
               </button>
             </div>
           </form>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '1rem', padding: '0.75rem 1rem', background: 'rgba(238,105,131,0.05)', borderRadius: '10px', border: '1px dashed rgba(238,105,131,0.2)' }}>
-          <Info size={14} style={{ color: '#9A6472', flexShrink: 0 }} />
-          <p style={{ fontFamily: "'Inter', sans-serif", fontSize: '0.8125rem', color: '#9A6472', margin: 0 }}>
+        {/* Tip */}
+        <div className="flex items-start sm:items-center gap-3 mt-6 p-4 bg-accent/5 rounded-2xl border border-accent/20 border-dashed">
+          <div className="p-1.5 bg-accent/10 rounded-lg text-accent flex-shrink-0">
+            <Info size={16} strokeWidth={2.5} />
+          </div>
+          <p className="font-sans text-sm font-medium text-ink/70 m-0">
             Keep it constructive — share academic content, campus events, or helpful resources.
+            Images up to 5 MB · Videos up to 20 MB · PDFs/DOCX supported.
           </p>
         </div>
       </motion.div>
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 };
