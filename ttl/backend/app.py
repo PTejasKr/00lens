@@ -1,0 +1,794 @@
+"""
+app.py — Velo CI/CD Healing Agent
+Flask entry-point: clones the target repo, runs the healing pipeline with
+configurable retries, and returns a fully-shaped response to the React dashboard.
+
+AUTONOMOUS DESIGN NOTE:
+  Once POST /api/analyze is called, the entire healing pipeline (clone → test →
+  analyse → fix → commit → push) runs to completion with ZERO human intervention.
+  There are no input() prompts, no manual confirmation steps, and no blocking
+  callbacks that require a human response anywhere in this file or agent.py.
+"""
+
+import json
+import cv2
+import numpy as np
+import pytesseract
+import os
+import logging
+import queue
+import re
+import shutil
+import tempfile
+import threading
+import time
+import urllib.request as urlreq
+from datetime import datetime, timezone
+
+import git
+from flask import Flask, request, jsonify, Response, stream_with_context
+from flask_cors import CORS
+from dotenv import load_dotenv
+from flask_sqlalchemy import SQLAlchemy
+
+# Load .env from backend directory so it's found regardless of CWD
+_load_dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+load_dotenv(dotenv_path=_load_dotenv_path, override=True)
+
+from agent import run_healing_agent, format_branch_name  # noqa: E402
+from github_utils import log_suspicious_action  # noqa: E402
+from auth import require_auth, github_oauth_start, github_oauth_callback  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# App initialisation
+# ---------------------------------------------------------------------------
+# Initialize SQLAlchemy instance
+db = SQLAlchemy()
+# Bind to Flask app
+db.init_app(app)
+# Import models after db init
+from models import Seller, SuspiciousLog
+# Ensure tables exist
+with app.app_context():
+    db.create_all()
+
+# CORS — allow every origin for local/hackathon use; allow Authorization for JWT.
+# In production, replace "*" with your specific frontend domain(s).
+CORS(app, resources={r"/api/*": {
+    "origins": os.getenv("ALLOWED_ORIGINS", "*"),
+    "allow_headers": ["Content-Type", "Authorization"],
+}})
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("velo.app")
+
+MAX_RETRIES: int = int(os.getenv("MAX_RETRIES", 5))
+
+_BUG_PATTERN = re.compile(
+    r"\[(\w+)\] error in (.+?) line (\d+) \u2192 Fix: (.+)"
+)
+
+
+def _parse_bug_report(line: str) -> dict | None:
+    m = _BUG_PATTERN.match(line.strip())
+    if m:
+        return {
+            "bug_type":        m.group(1),
+            "file":            m.group(2).strip(),
+            "line_number":     int(m.group(3)),
+            "fix_description": m.group(4).strip(),
+        }
+    return None
+
+
+def _clone_url_with_token(repo_url: str) -> str:
+    """If GITHUB_TOKEN is set, return a clone URL with auth so Railway/server can clone without prompt."""
+    token = os.getenv("GITHUB_TOKEN", "").strip()
+    if not token or "github.com" not in repo_url:
+        return repo_url
+    return repo_url.replace("https://", f"https://{token}@", 1)
+
+
+# ---------------------------------------------------------------------------
+# Commit results.json to the healing branch
+# ---------------------------------------------------------------------------
+def _commit_results_json(repo_path: str, formatted_branch: str, payload: dict) -> None:
+    try:
+        repo = git.Repo(repo_path)
+        try:
+            current = repo.active_branch.name
+        except TypeError:
+            current = "DETACHED_HEAD"
+
+        if current != formatted_branch:
+            try:
+                repo.git.checkout(formatted_branch)
+            except git.GitCommandError:
+                logger.warning(
+                    "results.json commit skipped: could not checkout '%s'", formatted_branch
+                )
+                return
+
+        results_path = os.path.join(repo_path, "results.json")
+        with open(results_path, "w", encoding="utf-8") as fh:
+            json.dump(payload, fh, indent=2)
+
+        repo.index.add(["results.json"])
+        if repo.index.diff("HEAD"):
+            author_name  = os.getenv("GIT_AUTHOR_NAME")
+            author_email = os.getenv("GIT_AUTHOR_EMAIL")
+            commit_msg   = "[AI-AGENT] Add results.json — final pipeline report"
+            if author_name and author_email:
+                actor = git.Actor(author_name, author_email)
+                repo.index.commit(commit_msg, author=actor, committer=actor)
+            else:
+                repo.index.commit(commit_msg)
+
+            origin  = repo.remote(name="origin")
+            refspec = f"{formatted_branch}:{formatted_branch}"
+            origin.push(refspec=refspec, set_upstream=True)
+            logger.info("results.json committed and pushed to '%s'.", formatted_branch)
+        else:
+            logger.info("results.json unchanged — no commit needed.")
+
+    except Exception as exc:
+        logger.warning("Could not commit results.json: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# Auth (GitHub OAuth via backend) — no Firebase
+# ---------------------------------------------------------------------------
+@app.route("/api/auth/github", methods=["GET"])
+def auth_github_start():
+    """Redirect to GitHub OAuth. Frontend links here for 'Login with GitHub'."""
+    return github_oauth_start()
+
+
+@app.route("/api/auth/github/callback", methods=["GET"])
+def auth_github_callback():
+    """GitHub redirects here with code; we exchange for token and redirect to frontend with JWT."""
+    return github_oauth_callback()
+
+
+@app.route("/api/auth/me", methods=["GET"])
+@require_auth
+def auth_me():
+    """Return current user from JWT (Authorization: Bearer <token>)."""
+    return jsonify({"user": request.current_user}), 200
+# Auto GitHub PR creation (best-effort, requires GITHUB_TOKEN env var)
+# ---------------------------------------------------------------------------
+def _clone_url_with_token(repo_url: str, token: str = "") -> str:
+    """Inject GITHUB_TOKEN into a GitHub HTTPS URL for credential-free cloning."""
+    token = token or os.getenv("GITHUB_TOKEN", "").strip()
+    if not token or "github.com" not in repo_url:
+        return repo_url
+    return repo_url.replace("https://", f"https://{token}@", 1)
+
+
+# ---------------------------------------------------------------------------
+# GitHub identity helpers
+# ---------------------------------------------------------------------------
+def _get_token_owner(token: str) -> str | None:
+    """Return the GitHub login (username) for the given token, or None on failure."""
+    try:
+        req = urlreq.Request(
+            "https://api.github.com/user",
+            headers={
+                "Authorization": f"token {token}",
+                "Accept":        "application/vnd.github+json",
+                "User-Agent":    "Velo-Agent/1.0",
+            },
+        )
+        with urlreq.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode()).get("login")
+    except Exception as exc:
+        logger.warning("Could not resolve token owner: %s", exc)
+        return None
+
+
+def _fork_repo(repo_url: str, token: str) -> str | None:
+    """
+    Fork repo_url into the token owner's account via the GitHub API.
+    Returns an authenticated clone URL for the new fork, or None on failure.
+    Waits up to ~12 s for GitHub to initialise the fork before returning.
+    """
+    m = re.match(r"https://github\.com/([^/]+)/([^/\s]+?)(?:\.git)?/?$", repo_url.strip())
+    if not m:
+        return None
+    owner, repo = m.group(1), m.group(2)
+
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept":        "application/vnd.github+json",
+        "Content-Type":  "application/json",
+        "User-Agent":    "Velo-Agent/1.0",
+    }
+    try:
+        req = urlreq.Request(
+            f"https://api.github.com/repos/{owner}/{repo}/forks",
+            data=b"{}",
+            headers=headers,
+            method="POST",
+        )
+        with urlreq.urlopen(req, timeout=20) as r:
+            fork_data = json.loads(r.read().decode())
+
+        fork_full_name = fork_data.get("full_name")
+        if not fork_full_name:
+            logger.warning("Fork API returned no full_name.")
+            return None
+
+        # GitHub takes a few seconds to initialise the fork
+        time.sleep(12)
+        logger.info("Fork ready: %s", fork_full_name)
+        return f"https://{token}@github.com/{fork_full_name}.git"
+
+    except Exception as exc:
+        logger.warning("Fork creation failed: %s", exc)
+        return None
+
+
+def _has_push_access(repo_url: str, token: str) -> bool:
+    """Check if the token has push access to the repo."""
+    if not token:
+        return False
+    
+    m = re.match(r"https://github\.com/([^/]+)/([^/\s]+?)(?:\.git)?/?$", repo_url.strip())
+    if not m:
+        return False
+    owner, repo = m.group(1), m.group(2)
+
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept":        "application/vnd.github+json",
+        "User-Agent":    "Velo-Agent/1.0",
+    }
+    
+    try:
+        req = urlreq.Request(
+            f"https://api.github.com/repos/{owner}/{repo}",
+            headers=headers,
+        )
+        with urlreq.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read().decode())
+            perms = data.get("permissions", {})
+            can_push = perms.get("push", False) or perms.get("admin", False)
+            logger.info(f"[_has_push_access] Checked {owner}/{repo}: push={perms.get('push')}, admin={perms.get('admin')} -> {can_push}")
+            return can_push
+    except Exception as exc:
+        logger.warning("Could not check push permissions: %s", exc)
+        return False
+
+
+def _resolve_clone_url(repo_url: str, emit=None, user_token: str = None) -> tuple[str, str | None]:
+    """
+    Decide whether to clone the original repo or fork it first.
+
+    Returns (clone_url, fork_owner):
+    - fork_owner is the GitHub login that owns the fork (for cross-fork PRs),
+      or None if we cloned the original repo directly.
+
+    Strategy:
+      • If GITHUB_TOKEN is not set → clone original (no auth).
+      • If token owner == repo owner → clone with token (direct push will work).
+      • If token owner != repo owner → fork → clone fork (enables push + cross-fork PR).
+    """
+    def _log(msg: str) -> None:
+        logger.info(msg)
+        if emit:
+            emit({"type": "log", "tag": "INFO", "message": msg})
+
+    # PRIORITIZE: User's OAuth token (if provided via auth) over system env var
+    # This allows authenticated users to push to their own repos without system config.
+    system_token = os.getenv("GITHUB_TOKEN", "").strip()
+    
+    # Check if a user-specific token was passed (e.g. from JWT)
+    # We'll need to update the signature of _resolve_clone_url to accept an optional token override
+    token = system_token
+    if not token:
+        _log("No GITHUB_TOKEN set — cloning without auth (push will be skipped).")
+        return repo_url, None
+
+    m = re.match(r"https://github\.com/([^/]+)/", repo_url)
+    repo_owner = m.group(1) if m else None
+
+    token_owner = _get_token_owner(token)
+    if not token_owner:
+        _log("Could not resolve token owner — cloning with token (best-effort).")
+        return _clone_url_with_token(repo_url, token), None
+
+    # Check for direct push access (Collaborator or Owner)
+    if _has_push_access(repo_url, token):
+        _log(f"Token has push access to {repo_url} — cloning directly.")
+        return _clone_url_with_token(repo_url, token), None
+
+    if repo_owner and token_owner.lower() == repo_owner.lower():
+        _log(f"Repo belongs to token owner ({token_owner}) — cloning directly.")
+        return _clone_url_with_token(repo_url, token), None
+
+    # Different owner → fork first
+    _log(f"Repo owned by '{repo_owner}' — forking to '{token_owner}' for push access...")
+    fork_url = _fork_repo(repo_url, token)
+    if fork_url:
+        _log(f"Fork created under {token_owner} — cloning fork.")
+        return fork_url, token_owner
+
+    _log("Fork failed — falling back to direct clone (push may fail).")
+    return _clone_url_with_token(repo_url), None
+
+
+# ---------------------------------------------------------------------------
+# Auto GitHub PR creation (supports direct push + cross-fork PRs)
+# ---------------------------------------------------------------------------
+def _create_github_pr(
+    repo_url: str,
+    branch_name: str,
+    all_fixes: list,
+    head_repo_owner: str | None = None,
+    user_token: str = None,
+    emit=None,
+) -> str | None:
+    """
+    Create a PR on the *original* repo.
+
+    head_repo_owner: when the branch was pushed to a fork, pass the fork
+    owner's login so GitHub can find the branch (head = "fork_owner:branch").
+    Leave None when the branch was pushed directly to the original repo.
+    """
+    token = user_token or os.getenv("GITHUB_TOKEN", "").strip()
+    if not token:
+        logger.warning("[_create_github_pr] No token found (user or system) — aborting PR.")
+        if emit: emit({"type": "log", "tag": "WARN", "message": "PR skipped: No valid GitHub token found."})
+        return None
+
+    # Parse owner/repo
+    m = re.match(r"https://github\.com/([^/]+)/([^/\s]+?)(?:\.git)?/?$", repo_url.strip())
+    if not m:
+        logger.warning(f"[_create_github_pr] Could not parse repo URL: {repo_url}")
+        if emit: emit({"type": "error", "message": f"PR failed: Could not parse repo URL '{repo_url}'"})
+        return None
+    owner, repo = m.group(1), m.group(2)
+
+    base = "main"  # TODO: detect default branch dynamically?
+    head = f"{head_repo_owner}:{branch_name}" if head_repo_owner else branch_name
+
+    logger.info(f"[_create_github_pr] Attempting PR: {head} -> {base} on {owner}/{repo}")
+
+    title = f"Fix: {all_fixes[0]['fix_description']}" if len(all_fixes) == 1 else f"Fix {len(all_fixes)} issues found by Velo"
+    body  = "## Velo Autonomous Fixes\\n\\n"
+    for fix in all_fixes:
+        body += f"- **{fix.get('bug_type', 'BUG')}** in `{fix['file']}`: {fix.get('fix_description', 'No description')}\\n"
+    
+    body += "\\n\\n*Generated by [Velo Workspace Agent](https://github.com/oyelurker/velo-agent)*"
+
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept":        "application/vnd.github+json",
+        "User-Agent":    "Velo-Agent/1.0",
+    }
+    
+    payload = {
+        "title": title,
+        "body":  body,
+        "head":  head,
+        "base":  base,
+        "maintainer_can_modify": False,  # Avoid 422 error when creating PR from another user's fork
+    }
+
+    try:
+        req = urlreq.Request(
+            f"https://api.github.com/repos/{owner}/{repo}/pulls",
+            data=json.dumps(payload).encode(),
+            headers=headers,
+            method="POST",
+        )
+        with urlreq.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read().decode())
+            html_url = data.get("html_url")
+            logger.info(f"[_create_github_pr] Success: {html_url}")
+            return html_url
+
+    except Exception as exc:
+        err_msg = str(exc)
+        # If it failed, maybe because PR already exists? Check HTTPError for details
+        if hasattr(exc, "read"):
+            try:
+                err_body = exc.read().decode()
+                logger.warning(f"[_create_github_pr] API Error Body: {err_body}")
+                err_msg = f"{exc} — {err_body}"
+            except: pass
+            
+        logger.warning(f"[_create_github_pr] POST failed: {exc}")
+        if emit: emit({"type": "error", "message": f"GitHub PR creation failed: {err_msg}"})
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Shared healing loop — used by both endpoints
+# ---------------------------------------------------------------------------
+def _run_healing_loop(
+    repo_url: str,
+    team_name: str,
+    leader_name: str,
+    tmp_dir: str,
+
+    emit=None,
+    fork_owner: str | None = None,
+    user_token: str = None,
+) -> dict:
+    """
+    Runs the full continuous healing loop via the agent and returns shaped response dict.
+    `emit` is an optional callable(event_dict) for SSE streaming.
+    """
+    raw_branch_name  = f"{team_name} {leader_name}"
+    formatted_branch = format_branch_name(raw_branch_name)
+
+    def _e(tag: str, msg: str) -> None:
+        if emit:
+            emit({"type": "log", "tag": tag, "message": msg})
+
+    # The agent runs its own iteration loop internally up to MAX_RETRIES
+    results = run_healing_agent(
+        repo_path=tmp_dir,
+        raw_branch_name=raw_branch_name,
+        emit=emit,
+        max_retries=MAX_RETRIES,
+    )
+
+    # 1. Shape the detailed bug reports into objects for the frontend
+    all_fixes = []
+    seen_bug_lines = set()
+
+    for br in results.get("bug_reports", []):
+        parsed = _parse_bug_report(br)
+        if parsed and br not in seen_bug_lines:
+            seen_bug_lines.add(br)
+            all_fixes.append({
+                "file":           parsed["file"],
+                "bug_type":       parsed["bug_type"],
+                "line_number":    parsed["line_number"],
+                "commit_message": f"[AI-AGENT] Fix: {parsed['fix_description']}",
+                "status":         "fixed" if parsed["file"] in results.get("files_fixed", []) else "failed",
+                "fix_description": parsed["fix_description"],
+            })
+
+    # The timeline returned from agent: {iteration, status, timestamp, failures_in_run, fixes_in_run}
+    timeline = results.get("ci_timeline", [])
+
+    # 2. Re-commit results.json (overwrite agent's local save) and push so judges see it on branch
+    # We pass the full agent payload so it's transparent, augmenting it with frontend expected keys if we want,
+    # but the agent already writes a great generic results.json! Let's just save and push it with formatting.
+    results["fixes"] = all_fixes  # Attach the parsed fixes to the repo's results.json
+    _commit_results_json(tmp_dir, formatted_branch, results)
+
+    # 3. Auto-create GitHub PR (ONLY if forked)
+    pr_url = None
+    if all_fixes:
+        if fork_owner:
+            _e("INFO", "Creating GitHub Pull Request...")
+            pr_url = _create_github_pr(repo_url, formatted_branch, all_fixes, head_repo_owner=fork_owner, user_token=user_token, emit=emit)
+            if pr_url:
+                _e("INFO", f"PR created → {pr_url}")
+        else:
+            _e("INFO", "Direct push successful — skipping PR creation.")
+
+    score_dict = results.get("score", {})
+
+    # 4. Map back to frontend expected fields
+    return {
+        "repo_url":        repo_url,
+        "team_name":       team_name,
+        "leader_name":     leader_name,
+        "branch_name":     formatted_branch,
+        "total_failures":  results.get("total_failures_detected", 0),
+        "total_fixes":     results.get("total_fixes_applied", 0),
+        "ci_status":       results.get("final_ci_status", "FAILED"),
+        "execution_time":  results.get("total_time_taken", "0m 0s"),
+        "iterations_used": len(timeline),
+        "max_iterations":  MAX_RETRIES,
+        "score_breakdown": {
+            "base":               score_dict.get("base", 100),
+            "speed_bonus":        score_dict.get("speed_bonus", 0),
+            "efficiency_penalty": score_dict.get("efficiency_penalty", 0),
+            "final_score":        score_dict.get("final", 0),
+        },
+        "fixes":    all_fixes,
+        "diffs":    results.get("diffs", {}),
+        "pr_url":   pr_url,
+        "timeline": timeline,
+        "status":   "SUCCESS" if results.get("final_ci_status") == "PASSED" else "FAILED",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+@app.route("/health", methods=["GET"])
+def health_check():
+    return jsonify({
+        "status":  "ok",
+        "service": "Velo CI/CD Healing Agent",
+        "version": "1.1.0",
+    }), 200
+
+
+# ---------------------------------------------------------------------------
+# Primary trigger endpoint (batch — waits for full result)
+# ---------------------------------------------------------------------------
+# Seller profile endpoints
+# ---------------------------------------------------------------------------
+
+@app.route("/api/seller/profile", methods=["GET"])
+@require_auth
+def get_seller_profile():
+    """Return the logged‑in seller's business details.
+    The user is identified by the JWT `user_id` claim set during GitHub OAuth.
+    """
+    user_id = request.current_user.get("user_id")
+    seller = Seller.query.filter_by(user_id=user_id).first()
+    if not seller:
+        return jsonify({"error": "Seller profile not found."}), 404
+    return jsonify(seller.to_dict()), 200
+
+@app.route("/api/seller/profile", methods=["POST"])
+@require_auth
+def upsert_seller_profile():
+    """Create or update the seller's business details.
+    Expected JSON: {"gstin": "...", "address": "..."}
+    """
+    data = request.get_json(silent=True) or {}
+    gstin = data.get("gstin")
+    address = data.get("address")
+    user_id = request.current_user.get("user_id")
+    seller = Seller.query.filter_by(user_id=user_id).first()
+    if seller:
+        if gstin is not None:
+            seller.gstin = gstin
+        if address is not None:
+            seller.address = address
+    else:
+        seller = Seller(user_id=user_id, gstin=gstin, address=address)
+        db.session.add(seller)
+    db.session.commit()
+    return jsonify(seller.to_dict()), 200
+
+# ---------------------------------------------------------------------------
+# Suspicious action logging endpoint
+# ---------------------------------------------------------------------------
+
+@app.route("/api/log/suspicious", methods=["POST"])
+@require_auth
+def log_suspicious():
+    """Record a suspicious action and push it to the `invorated-bugs` branch.
+    Expected JSON: {"action": "...", "details": { ... }}
+    """
+    data = request.get_json(silent=True) or {}
+    action = data.get("action")
+    details = data.get("details", {})
+    if not action:
+        return jsonify({"error": "Missing 'action' field."}), 400
+    log_entry = SuspiciousLog(action=action, details=details)
+    db.session.add(log_entry)
+    db.session.commit()
+    # Push to GitHub branch
+    try:
+        log_suspicious_action(action=action, details=details)
+    except Exception as exc:
+        logger.exception("Failed to push suspicious log to GitHub")
+        return jsonify({"error": str(exc)}), 500
+    return jsonify({"status": "logged"}), 200
+# ---------------------------------------------------------------------------
+@app.route("/api/analyze", methods=["POST"])
+
+@app.route("/api/ocr", methods=["POST"])
+@require_auth
+def ocr_endpoint():
+    """Accept an image file, run OCR, and return extracted text."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file part in request."}), 400
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "No selected file."}), 400
+    # Read file bytes into numpy array
+    file_bytes = file.read()
+    np_arr = np.frombuffer(file_bytes, np.uint8)
+    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    if img is None:
+        return jsonify({"error": "Could not decode image."}), 400
+    # Preprocess: grayscale and threshold for better OCR
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    # Perform OCR using pytesseract
+    try:
+        text = pytesseract.image_to_string(thresh)
+    except Exception as e:
+        logger.exception("OCR processing failed")
+        return jsonify({"error": f"OCR processing failed: {str(e)}"}), 500
+    return jsonify({"extracted_text": text}), 200
+@require_auth
+def analyze():
+    """
+    Trigger the autonomous healing pipeline. Requires Authorization: Bearer <jwt> (from GitHub OAuth).
+
+    Expected JSON body:
+    ┌───────────────────────────────────────────────────────────┐
+    │ {                                                         │
+    │   "repo_url":    "https://github.com/org/repo",          │
+    │   "team_name":   "Vakratund",                            │
+    │   "leader_name": "Tejas Kumar Punyap"                    │
+    │ }                                                         │
+    └───────────────────────────────────────────────────────────┘
+
+    Flow:
+      1. Validate input fields.
+      2. Clone the GitHub repo into a secure temp directory.
+      3. Build the branch name: format_branch_name("{team_name} {leader_name}")
+         → VAKRATUND_TEJAS_KUMAR_PUNYAP_AI_Fix
+      4. Run the healing agent in a retry loop (up to MAX_RETRIES iterations).
+         Each iteration: sandbox_tester → llm_solver → gitops
+         Stop early when tests pass or no more bugs are found.
+      5. Shape the aggregated results into the React dashboard format.
+      6. Clean up temp directory unconditionally.
+
+    Returns:
+        200 — all tests passing after healing
+        207 — partial success (fixes applied but tests still failing)
+        400 — bad request (missing / invalid fields, clone failure)
+        500 — unhandled internal error
+    """
+    # -- Validate request body ------------------------------------------
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Request body must be valid JSON."}), 400
+
+    repo_url    = data.get("repo_url",    "").strip()
+    team_name   = data.get("team_name",   "").strip()
+    leader_name = data.get("leader_name", "").strip()
+
+    if not repo_url:    return jsonify({"error": "Missing required field: repo_url"}),    400
+    if not team_name:   return jsonify({"error": "Missing required field: team_name"}),   400
+    if not leader_name: return jsonify({"error": "Missing required field: leader_name"}), 400
+
+    formatted_branch = format_branch_name(f"{team_name} {leader_name}")
+    logger.info("Batch analysis — repo=%s  branch=%s", repo_url, formatted_branch)
+
+    tmp_dir = None
+    try:
+        tmp_dir = tempfile.mkdtemp(prefix="velo_")
+        
+        # Extract GitHub access token from authenticated user (if available)
+        user_token = request.current_user.get("access_token") if hasattr(request, "current_user") else None
+        
+        clone_url, fork_owner = _resolve_clone_url(repo_url, user_token=user_token)
+        try:
+            git.Repo.clone_from(clone_url, tmp_dir)
+        except git.GitCommandError as exc:
+            return jsonify({"error": f"Failed to clone repository: {exc}"}), 400
+
+        response = _run_healing_loop(repo_url, team_name, leader_name, tmp_dir, fork_owner=fork_owner, user_token=user_token)
+        http_status = 200 if response["ci_status"] == "PASSED" else 207
+        return jsonify(response), http_status
+
+    except Exception as exc:
+        logger.exception("Unhandled error during healing pipeline.")
+        return jsonify({"error": str(exc), "status": "FATAL_ERROR"}), 500
+
+    finally:
+        if tmp_dir and os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+# ---------------------------------------------------------------------------
+# Streaming endpoint — emits SSE events as the pipeline runs
+# ---------------------------------------------------------------------------
+@app.route("/api/analyze/stream", methods=["POST"])
+def analyze_stream():
+    """
+    Same healing pipeline as /api/analyze but streams live progress events
+    via Server-Sent Events (text/event-stream) so the frontend can show
+    a real-time terminal as the agent runs.
+
+    Final event: {"type": "done", "data": <full response object>}
+    Log events:  {"type": "log",  "tag": "INFO|ERROR|AGENT|PATCH|PASS|BUG",
+                  "message": "..."}
+    """
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Request body must be valid JSON."}), 400
+
+    repo_url    = data.get("repo_url",    "").strip()
+    team_name   = data.get("team_name",   "").strip()
+    leader_name = data.get("leader_name", "").strip()
+
+    if not repo_url:    return jsonify({"error": "Missing required field: repo_url"}),    400
+    if not team_name:   return jsonify({"error": "Missing required field: team_name"}),   400
+    if not leader_name: return jsonify({"error": "Missing required field: leader_name"}), 400
+
+    if not leader_name: return jsonify({"error": "Missing required field: leader_name"}), 400
+
+    # Retrieve auth token from header manually since we can't use @require_auth easily with streaming response generator?
+    # Actually we can, but let's just peek at the header for the stream endpoint to get the user token
+    user_token = None
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        jwt_token = auth_header[7:].strip()
+        from auth import _verify_jwt
+        payload = _verify_jwt(jwt_token)
+        if payload:
+            user_token = payload.get("access_token")
+
+    event_q: queue.Queue = queue.Queue()
+
+    def emit(event: dict) -> None:
+        event_q.put(event)
+
+    def run_pipeline() -> None:
+        tmp_dir = None
+        try:
+            emit({"type": "log", "tag": "INFO", "message": "Initializing Velo Autonomous Agent..."})
+            emit({"type": "log", "tag": "INFO", "message": f"Target: {repo_url}"})
+
+            tmp_dir = tempfile.mkdtemp(prefix="velo_stream_")
+
+            # Resolve clone URL — forks the repo automatically if the token owner
+            # differs from the repo owner, enabling push access to any public repo.
+            clone_url, fork_owner = _resolve_clone_url(repo_url, emit=emit, user_token=user_token)
+            try:
+                git.Repo.clone_from(clone_url, tmp_dir)
+                emit({"type": "log", "tag": "INFO", "message": "Repository cloned ✓"})
+            except git.GitCommandError as exc:
+                emit({"type": "error", "message": f"Failed to clone repository: {exc}"})
+                return
+
+            response = _run_healing_loop(repo_url, team_name, leader_name, tmp_dir, emit=emit, fork_owner=fork_owner, user_token=user_token)
+            emit({"type": "done", "data": response})
+
+        except Exception as exc:
+            logger.exception("Unhandled error in streaming pipeline.")
+            emit({"type": "error", "message": str(exc)})
+
+        finally:
+            if tmp_dir and os.path.exists(tmp_dir):
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            event_q.put(None)  # Sentinel — signals generator to close
+
+    thread = threading.Thread(target=run_pipeline, daemon=True)
+    thread.start()
+
+    def generate():
+        while True:
+            try:
+                event = event_q.get(timeout=360)  # 6-min hard timeout
+                if event is None:
+                    return
+                yield f"data: {json.dumps(event)}\n\n"
+            except queue.Empty:
+                # Send keepalive so the browser doesn't close the connection
+                yield "data: {\"type\":\"keepalive\"}\n\n"
+
+    resp_headers = {
+        "Cache-Control":       "no-cache",
+        "X-Accel-Buffering":   "no",
+        "Connection":          "keep-alive",
+        "Access-Control-Allow-Origin": os.getenv("ALLOWED_ORIGINS", "*"),
+    }
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers=resp_headers,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dev server entry-point
+# ---------------------------------------------------------------------------
+if __name__ == "__main__":
+    port  = int(os.getenv("PORT", 5000))
+    debug = os.getenv("FLASK_ENV", "production") == "development"
+
+    logger.info("Starting Velo on port %d  (debug=%s)", port, debug)
+    app.run(host="0.0.0.0", port=port, debug=debug, threaded=True)
