@@ -36,15 +36,21 @@ _load_dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".e
 load_dotenv(dotenv_path=_load_dotenv_path, override=True)
 
 from agent import run_healing_agent, format_branch_name  # noqa: E402
+from flask_talisman import Talisman  # noqa: E402
+from flask_limiter import Limiter  # noqa: E402
+from flask_limiter.util import get_remote_address  # noqa: E402
 from github_utils import log_suspicious_action  # noqa: E402
 from auth import require_auth, github_oauth_start, github_oauth_callback  # noqa: E402
+from models import db  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# App initialisation
+# App initialization
 # ---------------------------------------------------------------------------
-# Initialize SQLAlchemy instance
-db = SQLAlchemy()
-# Bind to Flask app
+app = Flask(__name__)
+# Security middlewares
+talisman = Talisman(app)
+limiter = Limiter(key_func=get_remote_address, default_limits=["200 per day", "50 per hour"])
+# Initialize DB with shared instance
 db.init_app(app)
 # Import models after db init
 from models import Seller, SuspiciousLog
@@ -538,11 +544,15 @@ def get_seller_profile():
 @require_auth
 def upsert_seller_profile():
     """Create or update the seller's business details.
-    Expected JSON: {"gstin": "...", "address": "..."}
+    Expected JSON: {"gstin": "...", "address": "...", "company_name": "...", "person_name": "...", "phone_number": "...", "contact_details": "..."}
     """
     data = request.get_json(silent=True) or {}
     gstin = data.get("gstin")
     address = data.get("address")
+    company_name = data.get("company_name")
+    person_name = data.get("person_name")
+    phone_number = data.get("phone_number")
+    contact_details = data.get("contact_details")
     user_id = request.current_user.get("user_id")
     seller = Seller.query.filter_by(user_id=user_id).first()
     if seller:
@@ -550,8 +560,24 @@ def upsert_seller_profile():
             seller.gstin = gstin
         if address is not None:
             seller.address = address
+        if company_name is not None:
+            seller.company_name = company_name
+        if person_name is not None:
+            seller.person_name = person_name
+        if phone_number is not None:
+            seller.phone_number = phone_number
+        if contact_details is not None:
+            seller.contact_details = contact_details
     else:
-        seller = Seller(user_id=user_id, gstin=gstin, address=address)
+        seller = Seller(
+            user_id=user_id,
+            gstin=gstin,
+            address=address,
+            company_name=company_name,
+            person_name=person_name,
+            phone_number=phone_number,
+            contact_details=contact_details
+        )
         db.session.add(seller)
     db.session.commit()
     return jsonify(seller.to_dict()), 200
