@@ -1,0 +1,4 @@
+requests>=2.31,<3.0
+psycopg2-binary>=2.9,<3.0
+pytest-json-report>=1.5,<2.0
+tenacity>=8.2,<9.0

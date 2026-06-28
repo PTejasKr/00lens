@@ -45,3 +45,39 @@ class SuspiciousLog(db.Model):
             "action": self.action,
             "details": self.details,
         }
+
+class BRD(db.Model):
+    __tablename__ = 'brd'
+    id = Column(Integer, primary_key=True)
+    version = Column(String(50), nullable=False, unique=True)
+    content = Column(db.Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    is_active = Column(db.Boolean, default=True)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "version": self.version,
+            "content": self.content,
+            "created_at": self.created_at.isoformat(),
+            "is_active": self.is_active,
+        }
+
+class PRSummary(db.Model):
+    __tablename__ = 'pr_summary'
+    id = Column(Integer, primary_key=True)
+    pr_number = Column(Integer, nullable=False)
+    repository = Column(String(255), nullable=False)
+    brd_version_used = Column(String(50), nullable=False)
+    summary_content = Column(db.Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "pr_number": self.pr_number,
+            "repository": self.repository,
+            "brd_version_used": self.brd_version_used,
+            "summary_content": self.summary_content,
+            "created_at": self.created_at.isoformat(),
+        }

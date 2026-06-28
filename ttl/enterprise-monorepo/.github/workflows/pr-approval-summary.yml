@@ -1,0 +1,53 @@
+# PR Approval Summary & Changelog
+
+name: PR Approval Summary & Changelog
+
+# Run when a pull‑request review is submitted
+on:
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  generate-summary:
+    # Only trigger on approved reviews
+    if: ${{ github.event.review.state == 'approved' }}
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout the full history for accurate diff information
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Set up Node.js (v20) – required for the helper script
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Install any npm dependencies if a package.json exists
+      - name: Install script dependencies (if any)
+        run: |
+          if [ -f .github/scripts/package.json ]; then npm ci; else echo "No dependencies to install"; fi
+        working-directory: .github/scripts
+
+      # Execute the summary generator
+      - name: Generate PR summary & changelog entry
+        id: summary
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: node .github/scripts/generate_summary.js
+
+      # Open a PR in the target repository with the changelog entry
+      - name: Create changelog PR in target repo
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.TARGET_REPO_TOKEN }}
+          repository: ${{ secrets.TARGET_REPO }}
+          branch: ${{ secrets.TARGET_BRANCH || 'main' }}
+          commit-message: "Add changelog entry for PR #${{ github.event.pull_request.number }}"
+          title: "Changelog entry for PR #${{ github.event.pull_request.number }}"
+          body: ${{ steps.summary.outputs.changelog }}
+          add-paths: ${{ secrets.CHANGELOG_PATH || 'CHANGELOG.md' }}

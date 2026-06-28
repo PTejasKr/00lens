@@ -42,18 +42,22 @@ from flask_limiter.util import get_remote_address  # noqa: E402
 from github_utils import log_suspicious_action  # noqa: E402
 from auth import require_auth, github_oauth_start, github_oauth_callback  # noqa: E402
 from models import db  # noqa: E402
+from github_app import verify_webhook_signature, get_installation_token, create_check_run, update_check_run  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # App initialization
 # ---------------------------------------------------------------------------
 app = Flask(__name__)
+app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv("SQLALCHEMY_DATABASE_URI", "sqlite:///velo.db")
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
 # Security middlewares
 talisman = Talisman(app)
 limiter = Limiter(key_func=get_remote_address, default_limits=["200 per day", "50 per hour"])
 # Initialize DB with shared instance
 db.init_app(app)
 # Import models after db init
-from models import Seller, SuspiciousLog
+from models import Seller, SuspiciousLog, BRD, PRSummary
 # Ensure tables exist
 with app.app_context():
     db.create_all()
@@ -165,6 +169,41 @@ def auth_github_callback():
 def auth_me():
     """Return current user from JWT (Authorization: Bearer <token>)."""
     return jsonify({"user": request.current_user}), 200
+
+
+# ---------------------------------------------------------------------------
+# BRD Management (Business Requirement Document)
+# ---------------------------------------------------------------------------
+@app.route("/api/brd", methods=["POST"])
+# @require_auth # Optional: require auth for admin
+def create_brd():
+    """Create a new version of the BRD. Deactivates previous versions."""
+    data = request.json
+    if not data or "version" not in data or "content" not in data:
+        return jsonify({"error": "Missing version or content"}), 400
+
+    # Deactivate current active BRDs
+    BRD.query.filter_by(is_active=True).update({"is_active": False})
+    
+    # Create new BRD
+    new_brd = BRD(version=data["version"], content=data["content"], is_active=True)
+    db.session.add(new_brd)
+    try:
+        db.session.commit()
+        return jsonify({"message": "BRD updated successfully", "brd": new_brd.to_dict()}), 201
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating BRD: {e}")
+        return jsonify({"error": "Failed to create BRD (version might already exist)"}), 500
+
+@app.route("/api/brd/current", methods=["GET"])
+def get_current_brd():
+    """Fetch the currently active BRD."""
+    brd = BRD.query.filter_by(is_active=True).order_by(BRD.created_at.desc()).first()
+    if not brd:
+        return jsonify({"error": "No active BRD found"}), 404
+    return jsonify(brd.to_dict()), 200
+
 # Auto GitHub PR creation (best-effort, requires GITHUB_TOKEN env var)
 # ---------------------------------------------------------------------------
 def _clone_url_with_token(repo_url: str, token: str = "") -> str:
@@ -807,6 +846,197 @@ def analyze_stream():
         mimetype="text/event-stream",
         headers=resp_headers,
     )
+
+
+# ---------------------------------------------------------------------------
+# GitHub App Webhook Integration (Part 2)
+# ---------------------------------------------------------------------------
+
+def _run_github_app_healing(
+    installation_id: int,
+    owner: str,
+    repo_name: str,
+    head_branch: str,
+    head_sha: str,
+    clone_url: str,
+    check_run_id: int,
+    pr_number: int
+) -> None:
+    """Clones, heals, and completes Check Run in background thread."""
+    token = get_installation_token(installation_id)
+    if not token:
+        logger.error(f"[_run_github_app_healing] Token exchange failed for installation {installation_id}")
+        return
+
+    # Authenticated clone URL using GitHub App Installation Token
+    auth_clone_url = clone_url.replace("https://", f"https://x-access-token:{token}@", 1)
+
+    tmp_dir = tempfile.mkdtemp(prefix="velo_app_")
+    try:
+        # Clone target repo and checkout the PR head branch
+        git_repo = git.Repo.clone_from(auth_clone_url, tmp_dir)
+        git_repo.git.checkout(head_branch)
+
+        # Update check run status to in_progress
+        update_check_run(
+            owner=owner,
+            repo=repo_name,
+            check_run_id=check_run_id,
+            token=token,
+            status="in_progress",
+            summary="Velo is executing its multi-node healing agent on the codebase..."
+        )
+
+        # 1. PR Summary Generation
+        pr_summary_text = ""
+        brd_version = "None"
+        try:
+            # We need an app context to query the DB in a background thread
+            from app import app as current_app
+            with current_app.app_context():
+                active_brd = BRD.query.filter_by(is_active=True).order_by(BRD.created_at.desc()).first()
+                if active_brd:
+                    brd_version = active_brd.version
+                    # Get diff from GitHub API
+                    diff_url = f"https://api.github.com/repos/{owner}/{repo_name}/pulls/{pr_number}"
+                    req = urlreq.Request(diff_url, headers={
+                        "Authorization": f"token {token}",
+                        "Accept": "application/vnd.github.v3.diff",
+                        "User-Agent": "Velo-App/1.0"
+                    })
+                    with urlreq.urlopen(req, timeout=10) as r:
+                        diff_content = r.read().decode('utf-8')
+                    
+                    from agent import generate_pr_summary
+                    pr_summary_text = generate_pr_summary(diff_content, active_brd.content)
+                    
+                    # Save to DB
+                    new_summary = PRSummary(
+                        pr_number=pr_number,
+                        repository=f"{owner}/{repo_name}",
+                        brd_version_used=brd_version,
+                        summary_content=pr_summary_text
+                    )
+                    db.session.add(new_summary)
+                    db.session.commit()
+        except Exception as exc:
+            logger.error(f"Error generating PR summary: {exc}")
+            pr_summary_text = f"Error generating PR summary against BRD: {exc}"
+
+        # Execute autonomous healing
+        results = run_healing_agent(
+            repo_path=tmp_dir,
+            raw_branch_name=head_branch,
+            max_retries=MAX_RETRIES
+        )
+
+        # Parse final outcome and update Check Run
+        ci_passed = results.get("final_ci_passed", False)
+        conclusion = "success" if ci_passed else "failure"
+        summary = (
+            f"Velo completed with status: {results.get('final_ci_status', 'FAILED')}.\n"
+            f"Total fixes applied: {results.get('total_fixes_applied', 0)}.\n"
+            f"Iterations used: {results.get('iterations_used', 0)}/{MAX_RETRIES}."
+        )
+
+        fixes_text = "### Fixes Applied:\n"
+        for fix in results.get("bug_reports", []):
+            fixes_text += f"- {fix}\n"
+        if not results.get("bug_reports"):
+            fixes_text += "No issues detected.\n"
+
+        if pr_summary_text:
+            fixes_text = f"### AI PR Summary (BRD: v{brd_version})\n{pr_summary_text}\n\n" + fixes_text
+
+        update_check_run(
+            owner=owner,
+            repo=repo_name,
+            check_run_id=check_run_id,
+            token=token,
+            status="completed",
+            conclusion=conclusion,
+            summary=summary,
+            text_content=fixes_text
+        )
+
+    except Exception as exc:
+        logger.exception("Error in background GitHub App healing loop")
+        try:
+            update_check_run(
+                owner=owner,
+                repo=repo_name,
+                check_run_id=check_run_id,
+                token=token,
+                status="completed",
+                conclusion="failure",
+                summary=f"Internal agent error: {str(exc)}"
+            )
+        except Exception:
+            pass
+    finally:
+        if tmp_dir and os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.route("/api/github/webhook", methods=["POST"])
+def github_webhook():
+    """
+    Handle incoming GitHub App webhooks.
+    Specifically checks for 'pull_request' (opened, synchronize)
+    and runs the Velo autonomous agent in the background.
+    """
+    # 1. Verify Signature
+    signature = request.headers.get("X-Hub-Signature-256")
+    if not verify_webhook_signature(request.data, signature):
+        return jsonify({"error": "Invalid signature"}), 401
+
+    event_type = request.headers.get("X-GitHub-Event")
+    if not event_type:
+        return jsonify({"error": "Missing X-GitHub-Event"}), 400
+
+    payload = request.get_json(silent=True) or {}
+
+    # We are interested in Pull Requests being opened or synchronized (new commits pushed)
+    if event_type == "pull_request":
+        action = payload.get("action")
+        if action in ["opened", "synchronize"]:
+            pr = payload.get("pull_request", {})
+            repo_info = payload.get("repository", {})
+            installation = payload.get("installation", {})
+
+            owner = repo_info.get("owner", {}).get("login")
+            repo_name = repo_info.get("name")
+            installation_id = installation.get("id")
+            head_branch = pr.get("head", {}).get("ref")
+            head_sha = pr.get("head", {}).get("sha")
+            clone_url = pr.get("head", {}).get("repo", {}).get("clone_url")
+
+            pr_number = pr.get("number")
+
+            if not all([owner, repo_name, installation_id, head_branch, head_sha, clone_url, pr_number]):
+                return jsonify({"error": "Incomplete webhook payload fields"}), 400
+
+            # Authenticate to get access token for Check Run creation
+            token = get_installation_token(installation_id)
+            if not token:
+                return jsonify({"error": "Failed to get installation token"}), 500
+
+            # Create the Check Run
+            check_run_id = create_check_run(owner, repo_name, head_sha, token)
+            if not check_run_id:
+                return jsonify({"error": "Failed to create check run"}), 500
+
+            # Run the healing pipeline in a background thread
+            thread = threading.Thread(
+                target=_run_github_app_healing,
+                args=(installation_id, owner, repo_name, head_branch, head_sha, clone_url, check_run_id, pr_number),
+                daemon=True
+            )
+            thread.start()
+
+            return jsonify({"status": "queued", "check_run_id": check_run_id}), 202
+
+    return jsonify({"status": "ignored"}), 200
 
 
 # ---------------------------------------------------------------------------

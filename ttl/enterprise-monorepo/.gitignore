@@ -1,0 +1,69 @@
+# credentials & secrets
+credentials.txt
+*.credentials
+secrets/
+*.pem
+*.key
+
+# env files
+.env
+.env.local
+.env.production
+.env.*.local
+*.env.docker
+infra/.env
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# go
+bin/
+vendor/
+
+# java
+target/
+*.class
+*.jar
+.mvn/wrapper/maven-wrapper.jar
+
+# c / c++
+*.o
+*.so
+*.a
+*.out
+test_suite
+
+# node / js
+node_modules/
+dist/
+coverage/
+
+# ide
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# os junk
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# docker
+docker-compose.override.yml
+
+# logs
+*.log
+
+# test output
+test-results.json
+pr_comment.md

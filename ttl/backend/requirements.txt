@@ -1,0 +1,41 @@
+# Velo CI/CD Healing Agent — Python Dependencies
+# Pin minor versions for reproducible builds; patch updates are safe.
+
+# Web server and cross-origin support
+Flask==3.0.3
+Flask-SQLAlchemy>=3.1.0
+flask-cors==4.0.1
+
+# Database Support
+psycopg2-binary>=2.9.0
+
+# LangGraph orchestration (3-node StateGraph workflow)
+langgraph==0.2.53
+
+# Docker Python SDK — used to sandbox test execution inside containers
+docker==7.1.0
+
+# Google Gemini LLM — new official SDK (replaces deprecated google-generativeai)
+google-genai>=1.0.0
+
+# Git automation — used in Node 3 (GitOps) to branch, commit, and push
+gitpython==3.1.43
+
+# Environment variable management
+python-dotenv==1.0.1
+
+# JWT for GitHub OAuth session tokens
+PyJWT>=2.8.0
+
+# Runtime utilities (bundled with Python but pinned for CI predictability)
+requests>=2.31.0
+opencv-python
+pytesseract
+
+# Security and validation tools
+safety
+bandit
+semgrep
+flask-limiter
+flask-talisman
+pydantic

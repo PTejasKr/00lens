@@ -1,0 +1,3 @@
+#!/bin/sh
+# maven wrapper stub — replace with real mvnw via 'mvn wrapper:wrapper'
+exec mvn "$@"

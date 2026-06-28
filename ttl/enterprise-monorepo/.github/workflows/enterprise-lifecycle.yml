@@ -1,0 +1,239 @@
+# Monorepo CI pipeline — path-filtered matrix builds w/ perf tracking
+# Triggers on PR open/sync/close against main
+
+name: Enterprise Lifecycle
+
+on:
+  pull_request:
+    types: [opened, synchronize, closed]
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---- change detection ----
+  changes:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      java: ${{ steps.filter.outputs.java }}
+      python: ${{ steps.filter.outputs.python }}
+      c: ${{ steps.filter.outputs.c }}
+      javascript: ${{ steps.filter.outputs.javascript }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            go:
+              - 'go-app/**'
+            java:
+              - 'java-app/**'
+            python:
+              - 'python-app/**'
+            c:
+              - 'c-app/**'
+            javascript:
+              - 'js-app/**'
+
+  # ---- security gate — runs before any build ----
+  security-gate:
+    if: github.event.action != 'closed'
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install requests
+      - name: Run security gate
+        env:
+          ALLOWED_ACTORS: ${{ secrets.ALLOWED_ACTORS }}
+          SECURITY_WEBHOOK_URL: ${{ secrets.SECURITY_WEBHOOK_URL }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: python tools/security_gate.py
+
+  # ---- matrix build + metrics ----
+  analyze-and-report:
+    needs: [changes, security-gate]
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [go, java, python, c, javascript]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - run: pip install -r tools/requirements.txt
+
+      # --- Go ---
+      - name: Setup Go
+        if: matrix.language == 'go' && needs.changes.outputs.go == 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache: true
+
+      - name: Go tests
+        if: matrix.language == 'go' && needs.changes.outputs.go == 'true'
+        run: |
+          cd go-app
+          go test -v -race -covermode=atomic -coverprofile=coverage.out -json ./... > test-report.json 2>&1 || true
+
+      - name: Go coverage summary
+        if: matrix.language == 'go' && needs.changes.outputs.go == 'true'
+        run: cd go-app && go tool cover -func=coverage.out | tail -1
+
+      # --- Java ---
+      - name: Setup Java
+        if: matrix.language == 'java' && needs.changes.outputs.java == 'true'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Maven verify
+        if: matrix.language == 'java' && needs.changes.outputs.java == 'true'
+        run: cd java-app && ./mvnw clean verify -T 1C -B
+
+      # --- Python ---
+      - name: Setup uv
+        if: matrix.language == 'python' && needs.changes.outputs.python == 'true'
+        uses: astral-sh/setup-uv@v6
+
+      - name: Python tests
+        if: matrix.language == 'python' && needs.changes.outputs.python == 'true'
+        run: |
+          cd python-app
+          uv venv
+          source .venv/bin/activate
+          uv pip install -r requirements.txt
+          pytest --json-report --json-report-file=test-results.json --numprocesses=auto --cov=. --cov-report=term
+
+      # --- C ---
+      - name: Install C toolchain
+        if: matrix.language == 'c' && needs.changes.outputs.c == 'true'
+        run: sudo apt-get update && sudo apt-get install -y gcc make valgrind cppcheck
+
+      - name: C lint + build + test
+        if: matrix.language == 'c' && needs.changes.outputs.c == 'true'
+        run: |
+          cd c-app
+          cppcheck --error-exitcode=1 --enable=warning,performance .
+          make clean all
+          make test
+
+      # --- JavaScript ---
+      - name: Setup Node
+        if: matrix.language == 'javascript' && needs.changes.outputs.javascript == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'js-app/package-lock.json'
+
+      - name: JS audit + lint + test
+        if: matrix.language == 'javascript' && needs.changes.outputs.javascript == 'true'
+        run: |
+          cd js-app
+          npm ci
+          npm audit --audit-level=high
+          npm run lint
+          npm test -- --coverage
+
+      # --- metrics + PR comment ---
+      - name: Compute metrics
+        if: >-
+          (matrix.language == 'go' && needs.changes.outputs.go == 'true') ||
+          (matrix.language == 'java' && needs.changes.outputs.java == 'true') ||
+          (matrix.language == 'python' && needs.changes.outputs.python == 'true') ||
+          (matrix.language == 'c' && needs.changes.outputs.c == 'true') ||
+          (matrix.language == 'javascript' && needs.changes.outputs.javascript == 'true')
+        env:
+          DB_PROXY_HOST: ${{ secrets.DB_PROXY_HOST }}
+          DB_PROXY_PORT: ${{ secrets.DB_PROXY_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_SSLMODE: ${{ secrets.DB_SSLMODE }}
+          BRANCH_NAME: ${{ github.head_ref }}
+          COMMIT_HASH: ${{ github.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTHOR: ${{ github.actor }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: python tools/db_feedback.py ${{ matrix.language }}
+
+      - name: Post PR comment
+        if: >-
+          (matrix.language == 'go' && needs.changes.outputs.go == 'true') ||
+          (matrix.language == 'java' && needs.changes.outputs.java == 'true') ||
+          (matrix.language == 'python' && needs.changes.outputs.python == 'true') ||
+          (matrix.language == 'c' && needs.changes.outputs.c == 'true') ||
+          (matrix.language == 'javascript' && needs.changes.outputs.javascript == 'true')
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          header: metrics-${{ matrix.language }}
+          path: pr_comment.md
+
+  # ---- PR closed — clean up DB rows ----
+  database-cleanup:
+    if: github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r tools/requirements.txt
+      - name: Cleanup stale PR data
+        env:
+          DB_PROXY_HOST: ${{ secrets.DB_PROXY_HOST }}
+          DB_PROXY_PORT: ${{ secrets.DB_PROXY_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_SSLMODE: ${{ secrets.DB_SSLMODE }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python tools/db_cleanup.py
+
+  # ---- notify stakeholders on close ----
+  notify:
+    if: github.event.action == 'closed'
+    needs: database-cleanup
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r tools/requirements.txt
+      - name: Send notifications
+        env:
+          DB_PROXY_HOST: ${{ secrets.DB_PROXY_HOST }}
+          DB_PROXY_PORT: ${{ secrets.DB_PROXY_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_SSLMODE: ${{ secrets.DB_SSLMODE }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          MAILGUN_DOMAIN: ${{ secrets.MAILGUN_DOMAIN }}
+          MAILGUN_API_KEY: ${{ secrets.MAILGUN_API_KEY }}
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+        run: python tools/send_notifications.py

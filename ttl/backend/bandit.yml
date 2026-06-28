@@ -1,0 +1,12 @@
+name: bandit
+# Bandit configuration for TTL backend
+# Runs a security lint over the Python source files.
+# Excludes tests and third‑party libraries.
+exclude_dirs:
+  - "__pycache__"
+  - "tests"
+  - "vendor"
+# Ignore false‑positives that are not relevant to this project.
+skips:
+  - B101  # assert used for debugging – acceptable in dev only
+  - B311  # random used for non‑cryptographic purposes
