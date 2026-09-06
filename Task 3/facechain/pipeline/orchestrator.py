@@ -34,12 +34,22 @@ def run_pipeline(image: np.ndarray, progress_callback=None) -> PipelineResult:
         result.embedding = embedding
         result.face_count = 1 # primary face
         
-        # We need image bytes for search
+        if progress_callback: progress_callback("Running SerpApi reverse image search...")
+        
+        # Resize/compress image to stay under SerpApi's 500KB limit
         import cv2
-        _, encoded_img = cv2.imencode('.jpg', image)
+        max_dim = 800
+        h, w = image.shape[:2]
+        if max(h, w) > max_dim:
+            scale = max_dim / max(h, w)
+            search_img = cv2.resize(image, (int(w * scale), int(h * scale)))
+        else:
+            search_img = image
+            
+        encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 85]
+        _, encoded_img = cv2.imencode('.jpg', search_img, encode_param)
         image_bytes = encoded_img.tobytes()
         
-        if progress_callback: progress_callback("Running SerpApi reverse image search...")
         candidates = reverse_image_search(image_bytes)
         result.candidates_found = len(candidates)
         
