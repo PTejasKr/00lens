@@ -1,4 +1,4 @@
-app = "facechain-goa-2026"
+app = "00lens"
 primary_region = "iad"
 
 [build]
