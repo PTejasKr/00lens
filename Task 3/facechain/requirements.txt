@@ -1,0 +1,11 @@
+insightface
+opencv-python-headless
+Pillow
+numpy
+google-search-results
+web3
+python-dotenv
+streamlit
+pytest
+requests
+onnxruntime
